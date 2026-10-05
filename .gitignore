@@ -5,3 +5,5 @@
 
 _restore_backup_*/
 fp-info-cache
+
+.pio/
