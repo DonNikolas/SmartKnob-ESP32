@@ -1,28 +1,6 @@
-# \# SmartKnob Firmware
+## Status
 
-# 
-
-# Firmware for the custom SmartKnob-NB PCB.
-
-# 
-
-# \## Initial bring-up goals
-
-# 
-
-# \- Verify serial communication.
-
-# \- Check PSRAM initialization and memory access.
-
-# \- Test the LED ring using the custom PCB pin assignments.
-
-# 
-
-# \## Status
-
-# 
-
-# Project setup in progress. No firmware has been built or tested
-
-# on the newly assembled PCB yet.
-
+- PlatformIO build completed successfully.
+- Firmware uploaded to the custom SmartKnob-NB PCB.
+- Serial output ran for one minute without visible interruptions.
+- PSRAM memory access, LEDs, sensors and motor have not been tested yet.
