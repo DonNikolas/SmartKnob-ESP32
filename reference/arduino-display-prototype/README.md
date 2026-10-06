@@ -22,3 +22,20 @@ saved settings and display brightness control.
 
 Current development and hardware test results are documented in
 the firmware directory.
+
+
+
+## Prototype demonstration
+
+Recorded on 2026-10-06.
+
+The video shows the display prototype running on a separate ESP32
+DevKit connected to the display with jumper wires.
+The photo shows the complete setup.
+
+This demonstrates the earlier prototype on the DevKit.
+The display has not yet been tested on the current SmartKnob PCB.
+
+[Watch the demonstration video](media/display-prototype-demo.mp4)
+
+![ESP32 DevKit and display setup](media/display-prototype-setup.jpg)
