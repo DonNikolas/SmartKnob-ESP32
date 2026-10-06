@@ -1,3 +1,6 @@
+// Generated with ChatGPT assistance based on my project requirements.
+// Built, uploaded and tested on my SmartKnob PCB by me.
+
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
 
