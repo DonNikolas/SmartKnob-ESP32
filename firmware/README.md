@@ -3,7 +3,7 @@
 - PlatformIO build completed successfully.
 - Firmware uploaded to the custom SmartKnob-NB PCB.
 - Serial output ran for one minute without visible interruptions.
-- Sensors, Display and motor have not been tested yet.
+- Sensors and motor have not been tested yet.
 
 ## LED ring test
 
@@ -48,3 +48,42 @@ ChatGPT generated the LED and PSRAM test code based on my requirements
 and helped with the PlatformIO configuration and troubleshooting.
 I built and uploaded both programs, tested them on my PCB and
 recorded the results.
+
+## Display test
+
+Date: 2026-10-06
+
+The display test runs on the current SmartKnob PCB with the display
+adapter connected by a flex cable.
+
+### Configuration
+
+- GC9A01 display, 240 x 240 pixels.
+- SPI clock: 1 MHz.
+- Arduino_GFX: 1.4.7.
+- LVGL: 8.3.11.
+
+### Troubleshooting
+
+The first flex cable produced an incorrect pin mapping.
+After replacing it, the backlight worked but no image appeared.
+
+Reducing the SPI clock from 20 MHz to 1 MHz did not fix the problem.
+The display started working after I checked and resoldered its connections.
+This suggests a solder connection problem.
+
+### Result
+
+The display test worked after resoldering.
+The recorded test uses 1 MHz SPI. Higher speeds have not yet been
+retested after the repair.
+
+[Display test video](docs/images/Display-Test/display-test-demo.mov)
+
+![Display test setup](docs/images/Display-Test/display-test-setup.jpg)
+
+### AI assistance
+
+ChatGPT generated the test code and helped with configuration and
+troubleshooting. I checked the wiring, resoldered the display connections
+and tested the hardware.
