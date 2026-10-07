@@ -3,7 +3,6 @@
 - PlatformIO build completed successfully.
 - Firmware uploaded to the custom SmartKnob-NB PCB.
 - Serial output ran for one minute without visible interruptions.
-- Sensors and motor have not been tested yet.
 
 ## LED ring test
 
@@ -87,3 +86,23 @@ retested after the repair.
 ChatGPT generated the test code and helped with configuration and
 troubleshooting. I checked the wiring, resoldered the display connections
 and tested the hardware.
+
+## BME280 test
+
+Date: 2026-10-06
+
+- SDA: GPIO 48.
+- SCL: GPIO 41.
+- BME280 detected at address 0x76.
+- Sensor ID: 0x60.
+- Initialization passed.
+- Temperature, humidity and pressure readings were received every two seconds.
+
+The basic function test passed. Measurement accuracy has not been
+checked against a reference instrument.
+
+Another I2C device responded at 0x10. Its function was not tested.
+
+[Serial test output](docs/tests/bme280-test.txt)
+
+ChatGPT generated the test code. I built, uploaded and tested it on my PCB.

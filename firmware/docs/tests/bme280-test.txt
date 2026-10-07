@@ -1,0 +1,13 @@
+=== SmartKnob BME280 test ===
+SDA: GPIO 48 | SCL: GPIO 41 | Expected address: 0x76
+Scanning I2C bus...
+Device found at 0x10
+Device found at 0x76
+Devices found: 2
+Sensor ID: 0x60
+Initialization: PASS
+Measurements every 2 seconds. Send r to restart.
+Time: 79 s | Temperature: 27.16 C | Humidity: 36.66 %RH | Pressure: 964.84 hPa
+Time: 81 s | Temperature: 27.04 C | Humidity: 36.84 %RH | Pressure: 964.84 hPa
+Time: 83 s | Temperature: 27.02 C | Humidity: 36.57 %RH | Pressure: 964.81 hPa
+Time: 85 s | Temperature: 27.01 C | Humidity: 36.14 %RH | Pressure: 964.77 hPa
