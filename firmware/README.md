@@ -106,3 +106,27 @@ Another I2C device responded at 0x10. Its function was not tested.
 [Serial test output](docs/tests/bme280-test.txt)
 
 ChatGPT generated the test code. I built, uploaded and tested it on my PCB.
+
+## Microphone test — initial results
+
+Date: 2026-10-07
+
+- Microphone: ICS-41350.
+- PDM clock: GPIO 38.
+- Data: GPIO 39.
+- Channel select: GPIO 40, LOW.
+- PCM sample rate: 16 kHz, 16-bit mono.
+
+The firmware built and uploaded successfully.
+Sample data was received continuously during the office test.
+RMS values ranged from 7.7 to 9.9 and peak-to-peak values reached 176.
+No clipped samples were reported.
+
+A clear response to controlled sound has not yet been confirmed.
+Clap detection is not implemented. Further checks of the microphone
+signal and shorter analysis windows are planned.
+
+[Serial test output](docs/tests/microphone-test.txt)
+
+ChatGPT assisted in generating the test code. I uploaded it and recorded the
+measurements on my PCB.
