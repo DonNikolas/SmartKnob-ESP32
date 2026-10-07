@@ -143,3 +143,43 @@ Date: 2026-10-07
 
 ChatGPT helped create the diagnostic code.
 I uploaded the firmware and tested it on my PCB.
+
+### Hardware troubleshooting
+
+The first microphone showed no clear response to sound.
+Cleaning liquid entered the microphone opening while I cleaned
+the PCB after hand-soldering nearby components.
+
+After replacing the microphone, the LED level display responded
+to speech and clapping. Liquid damage is suspected, but the exact
+cause was not confirmed.
+
+### Video
+
+[Microphone LED level demonstration](docs/videos/microphone-level-demo.mp4)
+
+## Double-clap detection prototype
+
+Date: 2026-10-07
+
+Two detected short impulses toggle the LED ring on or off.
+The allowed interval between impulse starts is 120–550 ms.
+After switching, a 1000 ms lockout prevents immediate retriggering.
+
+### Initial result
+
+The double-clap function worked during a short manual test.
+The LED ring was used as the test light.
+
+### Testing still required
+
+- Count successful detections and missed double claps.
+- Check false triggers from speech, music and other sudden sounds.
+- Test different distances and background noise levels.
+- Run longer tests without intentional clapping.
+
+Reliable clap-only detection and a low false-trigger rate
+have not yet been demonstrated.
+
+ChatGPT helped develop the code.
+I uploaded the firmware and tested it on my PCB.
