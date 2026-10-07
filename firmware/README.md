@@ -130,3 +130,16 @@ signal and shorter analysis windows are planned.
 
 ChatGPT assisted in generating the test code. I uploaded it and recorded the
 measurements on my PCB.
+
+## Microphone LED level test
+
+Date: 2026-10-07
+
+- Built and uploaded the `microphone_level` test successfully.
+- Observed the LED ring reacting to speech and clapping.
+- Set the full-ring display level to 3200.
+- This value controls the display scale, not a clap detection threshold.
+- Automatic clap detection has not been implemented yet.
+
+ChatGPT helped create the diagnostic code.
+I uploaded the firmware and tested it on my PCB.
