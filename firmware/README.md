@@ -210,3 +210,32 @@ has not been tested yet.
 
 ChatGPT helped create the test code.
 I assembled the hardware and performed the manual tests.
+
+## Angle sensor test
+
+Date: 2026-10-08
+
+The MT6701 was tested with the motor mounted in the Seedlabs holder.
+The motor driver inputs stayed LOW during the test.
+
+### Results
+
+- The displayed angle followed manual rotation in both directions.
+- The stationary log contains 205 readings.
+- The angle ranged from 348.79° to 349.10° while stationary.
+- All readings reported `Field: TOO WEAK`.
+- Six readings reported `Track: LOST`.
+- Light pressure on the knob did not clear the field warning.
+- Offline CRC checking of the recorded frames found no errors.
+  The test firmware does not check CRC yet.
+
+Angle readout works, but the magnetic field warning and tracking
+loss still need investigation before closed-loop motor testing.
+Angle accuracy has not been verified against a calibrated reference.
+
+[Stationary test log](docs/tests/angle-sensor-stationary.txt)
+
+### AI assistance
+
+ChatGPT generated the test code and helped analyse the serial logs.
+I built and uploaded the firmware and tested the sensor on my PCB.
