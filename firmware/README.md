@@ -183,3 +183,30 @@ have not yet been demonstrated.
 
 ChatGPT helped develop the code.
 I uploaded the firmware and tested it on my PCB.
+
+## HX711 pressure-button test
+
+Date: 2026-10-08
+
+The test uses the HX711 with a Wheatstone bridge made from
+four 390-ohm SMD resistors (R3–R6).
+
+- Added a raw ADC test and a separate pressure-button test.
+- Mounted the motor using the two Seedlabs mounting parts.
+- Selected a switching threshold of 20000 ADC counts.
+- Pressing toggles the LED ring on or off.
+- The code requires release before another press can toggle the light.
+- The unloaded zero point is set with `t`.
+- `+` and `-` adjust the threshold during testing.
+
+The initial manual test worked with the assembled mechanism.
+Longer tests for repeatability, drift and false triggers are pending.
+The readings are not calibrated force values.
+
+The motor was mounted mechanically. Its electrical operation
+has not been tested yet.
+
+[Pressure-button demonstration](docs/videos/hx711-press-demo.mp4)
+
+ChatGPT helped create the test code.
+I assembled the hardware and performed the manual tests.
