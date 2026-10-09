@@ -257,3 +257,35 @@ The last counter report from each test showed:
 Communication passed the CRC checks in these tests.
 The weak-field warning and tracking loss remain unresolved.
 The motor was not driven during these tests.
+
+## Initial motor test
+
+Date: 2026-10-09
+
+Tested the SparkFun EM3215 motor with the TMC6300 driver.
+The PCB was powered through USB from the PC.
+
+### Test setup
+
+- Open-loop rotating field without angle feedback.
+- Phase voltage amplitude set to 0.30 V.
+- Commands `f` and `b` start opposite directions.
+- Each run stops automatically after three seconds.
+- Command `x` stops the motor early.
+
+### Results
+
+Both directions and the automatic stop worked.
+The motor produced a weak turning force and moved slightly unevenly.
+The cause of the uneven movement has not been investigated yet.
+
+This test does not verify closed-loop control or virtual detents.
+The angle sensor warnings documented above remain unresolved.
+
+[Motor test video](docs/videos/motor-test-demo.mp4)
+
+### AI assistance
+
+ChatGPT generated the test code.
+I built and uploaded the firmware, tested both directions
+and recorded the video.
