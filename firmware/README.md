@@ -289,3 +289,28 @@ The angle sensor warnings documented above remain unresolved.
 ChatGPT generated the test code.
 I built and uploaded the firmware, tested both directions
 and recorded the video.
+
+## Motor calibration diagnostics
+
+Date: 2026-10-09
+
+The calibration test uses an approach based on Scott Bezek's SmartKnob.
+The Seedlabs implementation was also reviewed.
+ChatGPT helped adapt the code to my PCB and add diagnostic checks.
+
+Two full-turn profiles were recorded at a motor voltage setting of 0.50 V.
+The rotor was moved by hand before the second test to change the starting position.
+
+Results:
+- Both tests indicated seven pole pairs and CCW sensor direction.
+- No CRC errors were recorded.
+- Weak-field warnings and TRACK LOST samples remained present.
+- Position-dependent and direction-dependent deviations were observed.
+- Both tests failed the additional offset consistency checks.
+
+The virtual spring remains disabled.
+Position-dependent compensation has not been implemented or tested yet.
+
+Test logs:
+- [First profile](docs/tests/motor-offset-profile-01.txt)
+- [Second profile](docs/tests/motor-offset-profile-02.txt)
