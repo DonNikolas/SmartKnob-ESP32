@@ -239,3 +239,21 @@ Angle accuracy has not been verified against a calibrated reference.
 
 ChatGPT generated the test code and helped analyse the serial logs.
 I built and uploaded the firmware and tested the sensor on my PCB.
+
+### CRC diagnostics update — 2026-10-09
+
+Added CRC checking and counters to the test firmware.
+
+The last counter report from each test showed:
+
+| Result | Slow rotation | Stationary |
+|---|---:|---:|
+| Sampled frames | 150 | 150 |
+| Invalid frames | 0 | 0 |
+| CRC errors | 0 | 0 |
+| Weak magnetic field | 150 | 150 |
+| Tracking lost | 5 | 3 |
+
+Communication passed the CRC checks in these tests.
+The weak-field warning and tracking loss remain unresolved.
+The motor was not driven during these tests.
