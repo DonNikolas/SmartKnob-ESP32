@@ -1,6 +1,6 @@
 // Generated with ChatGPT assistance based on my project requirements.
 // Initial MT6701 angle and magnetic field diagnostic.
-// Hardware validation pending. CRC checking is not implemented yet.
+// CRC checking and diagnostic counters added; hardware validation pending.
 
 #include <Arduino.h>
 
@@ -47,6 +47,25 @@ const char* fieldDescription(uint8_t status) {
     }
 }
 
+// CRC-6: polynomial x^6 + x + 1, initial value 0.
+// Process the 18 angle/status bits, most significant bit first.
+uint8_t calculateCRC(uint32_t data) {
+    uint8_t crc = 0;
+
+    for (int bit = 17; bit >= 0; bit--) {
+        const bool feedback =
+            ((crc >> 5) ^ (data >> bit)) & 1U;
+
+        crc = (crc << 1) & 0x3F;
+
+        if (feedback) {
+            crc ^= 0x03;
+        }
+    }
+
+    return crc;
+}
+
 void setup() {
     // Keep all motor driver inputs inactive.
     for (uint8_t pin : MOTOR_PINS) {
@@ -72,32 +91,84 @@ void setup() {
     Serial.println("CS: GPIO 14 | CLK: GPIO 21 | DATA: GPIO 47");
     Serial.println("Motor driver inputs LOW.");
     Serial.println("Turn the knob slowly by hand.");
-    Serial.println("CRC is not checked in this initial diagnostic.");
+    Serial.println("CRC checking enabled. Send r to reset counters.");
 }
 
 void loop() {
-    const uint32_t frame = readSensorFrame();
+    static uint32_t totalFrames = 0;
+    static uint32_t invalidFrames = 0;
+    static uint32_t crcErrors = 0;
+    static uint32_t weakFrames = 0;
+    static uint32_t strongFrames = 0;
+    static uint32_t lostFrames = 0;
 
-    // Constant all-zero/all-one frames require investigation.
-    // This check alone does not validate communication.
+    // Reset counters without restarting the sensor.
+    while (Serial.available() > 0) {
+        if (Serial.read() == 'r') {
+            totalFrames = 0;
+            invalidFrames = 0;
+            crcErrors = 0;
+            weakFrames = 0;
+            strongFrames = 0;
+            lostFrames = 0;
+            Serial.println("Counters reset.");
+        }
+    }
+
+    const uint32_t frame = readSensorFrame();
+    totalFrames++;
+
+    const uint8_t receivedCRC = frame & 0x3F;
+    const uint8_t expectedCRC = calculateCRC(frame >> 6);
+
+    // Reject constant-level frames even if their CRC happens to match.
     if (frame == 0 || frame == 0xFFFFFFUL) {
+        invalidFrames++;
         Serial.printf(
-            "WARNING: constant-level frame 0x%06lX\n",
+            "INVALID FRAME: 0x%06lX\n",
+            static_cast<unsigned long>(frame)
+        );
+    } else if (receivedCRC != expectedCRC) {
+        crcErrors++;
+        Serial.printf(
+            "CRC ERROR: received %02X, expected %02X"
+            " | Frame: 0x%06lX\n",
+            static_cast<unsigned>(receivedCRC),
+            static_cast<unsigned>(expectedCRC),
             static_cast<unsigned long>(frame)
         );
     } else {
+        // Interpret angle and status only after a successful CRC check.
         const uint16_t rawAngle = (frame >> 10) & 0x3FFF;
         const uint8_t status = (frame >> 6) & 0x0F;
+        const uint8_t field = status & 0x03;
+        const bool trackLost = (status & 0x08) != 0;
         const float angle = rawAngle * (360.0f / 16384.0f);
 
+        if (field == 2) weakFrames++;
+        if (field == 1) strongFrames++;
+        if (trackLost) lostFrames++;
+
         Serial.printf(
-            "Angle: %7.2f deg | Raw: %5u | Field: %s"
-            " | Track: %s | Frame: 0x%06lX\n",
+            "Angle: %7.2f deg | CRC: OK | Field: %s"
+            " | Track: %s\n",
             angle,
-            static_cast<unsigned>(rawAngle),
             fieldDescription(status),
-            (status & 0x08) ? "LOST" : "OK",
-            static_cast<unsigned long>(frame)
+            trackLost ? "LOST" : "OK"
+        );
+    }
+
+    // Counts describe sampled frames, not separate fault events.
+    if (totalFrames % 50 == 0) {
+        Serial.printf(
+            "COUNTERS | Total: %lu | Invalid: %lu | CRC errors: %lu"
+            " | Weak: %lu | Strong: %lu | Track lost: %lu\n",
+            static_cast<unsigned long>(totalFrames),
+            static_cast<unsigned long>(invalidFrames),
+            static_cast<unsigned long>(crcErrors),
+            static_cast<unsigned long>(weakFrames),
+            static_cast<unsigned long>(strongFrames),
+            static_cast<unsigned long>(lostFrames)
         );
     }
 
