@@ -337,3 +337,20 @@ ChatGPT helped create and revise the test code.
 I uploaded the firmware and tested it on my PCB.
 
 [Four-detent demo video](docs/videos/four-detents-demo.mp4)
+
+## Motor noise comparison
+
+Date: 2026-10-10
+
+Tested with four detents, a voltage limit of 0.60 V and
+a spring stiffness of 3.00 V/rad.
+
+- Mode n: immediately requests zero voltage on tracking loss.
+  Crackling was audible while holding against the motor.
+- Mode h: briefly holds the previous PWM output for less than
+  2 ms at low speed. No crackling was heard in the comparison.
+- The result was reproduced by switching between both modes.
+
+Weak-field warnings and tracking errors are still present.
+This test improves dropout handling; it does not fix the sensor.
+Long-term reliability, current draw and temperature remain unverified.

@@ -1,4 +1,4 @@
-// SmartKnob-NB: experimental spring A/B comparison, version 3.
+// SmartKnob-NB: experimental spring A/B comparison, version 5.
 // Generated with ChatGPT assistance. Hardware validation pending.
 // Architecture reference: Scott Bezek's SmartKnob motor_task.cpp and
 // mt6701_sensor.cpp (Copyright 2022 Scott Bezek, Apache-2.0).
@@ -31,6 +31,12 @@ float positiveAngle(float a);
 constexpr float DEAD_ZONE = 1 * DEG_TO_RAD_F;
 constexpr float DETENT_WIDTH = TAU_F / 4;
 constexpr float SNAP_ANGLE = 47 * DEG_TO_RAD_F; // 2-degree switching hysteresis.
+constexpr uint32_t HOLD_US = 2000;
+bool holdBriefDropouts = false; // Default remains immediate zero command.
+bool heldOutput = false;
+uint32_t heldTicks = 0, zeroedTicks = 0;
+bool zeroTest = false;
+float zeroStartAngle = 0;
 bool fourDetents = false;
 float activeCentre = 0;
 
@@ -146,8 +152,12 @@ bool readSensor() {
 
 void stopTest(const char* reason) {
     if (ready) motor.disable();
-    running = suspended = false;
+    running = suspended = false; heldOutput = false;
     Serial.printf("STOP: %s | Mode: %s\n", reason, corrected ? "CORRECTED" : "BASELINE");
+    Serial.printf("Dropouts: %s | Held ticks: %lu | Zeroed ticks: %lu\n",
+                  holdBriefDropouts ? "HOLD <2 ms" : "ZERO immediately",
+                  (unsigned long)heldTicks, (unsigned long)zeroedTicks);
+    Serial.println(zeroTest ? "Test: ZERO PWM" : "Test: SPRING");
     Serial.printf("Maximum displacement: %.2f deg | Maximum command: %.3f V\n",
                   maximumError / DEG_TO_RAD_F, maximumVoltage);
     Serial.printf("CRC: %lu | Lost: %lu | Recoveries: %lu | Weak-field frames: %lu\n",
@@ -155,21 +165,29 @@ void stopTest(const char* reason) {
                   (unsigned long)recoveries, (unsigned long)weakFrames);
 }
 void help() {
+    Serial.println("n = immediate zero on dropout (default) | h = hold PWM for <2 ms; only while OFF");
     Serial.println("0 = baseline | 1 = correction (selection allowed only while OFF)");
+    Serial.println("z = 10-second zero-command PWM test; no centre required. Do not turn rotor.");
     Serial.println("c = set centre while OFF | s = start 10-second test");
     Serial.println("2 = single centre | 4 = four detents at 90 degrees (only while OFF)");
     Serial.println("x = stop | i = stop and help. Centre retained when switching 0/1.");
-    Serial.println("Single centre: +/-45 deg limit. Four detents: full rotation allowed. Limit: 0.50 V.");
+    Serial.println("Single centre: +/-45 deg limit. Four detents: full rotation allowed. Limit: 0.60 V.");
     Serial.println("Weak field unresolved. Model does not establish absolute angle accuracy.");
 }
 
 void handleCommand(char key) {
     if (key == 'x' || key == 'X') { stopTest("User command"); return; }
     if (key == 'i') { if (running) stopTest("Status requested"); help(); return; }
-    if (key != '0' && key != '1' && key != 'c' && key != 's' && key != '2' && key != '4') return;
+    if (key != '0' && key != '1' && key != 'c' && key != 's' && key != '2' && key != '4' && key != 'z' && key != 'n' && key != 'h') return;
     if (running) { stopTest("Stop before changing mode or centre"); return; }
     if (!ready || !good || micros() - lastGoodUs >= STALE_US || digitalRead(DRIVER_DIAG)) {
         Serial.println("BLOCKED: check sensor and driver status."); return;
+    }
+    if (key == 'n' || key == 'h') {
+        holdBriefDropouts = key == 'h';
+        Serial.println(holdBriefDropouts ? "Dropouts: HOLD <2 ms, then zero; OFF at 5 ms."
+                                        : "Dropouts: ZERO immediately; OFF at 5 ms.");
+        return;
     }
     if (key == '2' || key == '4') {
         fourDetents = key == '4';
@@ -188,13 +206,18 @@ void handleCommand(char key) {
         Serial.printf("Centre: %.2f raw sensor deg. Motor OFF.\n", centreRaw / DEG_TO_RAD_F);
         return;
     }
-    if (!centred) { Serial.println("BLOCKED: set centre with c first."); return; }
+    zeroTest = key == 'z';
+    zeroStartAngle = angleCache;
+    if (!zeroTest && !centred) { Serial.println("BLOCKED: set centre with c first."); return; }
     activeCentre = centreRaw;
-    if (fabsf(detentError(angleCache)) > 5 * DEG_TO_RAD_F) {
+    if (!zeroTest && fabsf(detentError(angleCache)) > 5 * DEG_TO_RAD_F) {
         Serial.println("BLOCKED: return within 5 deg of a selected detent."); return;
     }
     Serial.printf("START: %s | 10 seconds | x stops\n", corrected ? "CORRECTED" : "BASELINE");
-    Serial.println(fourDetents ? "Haptics: FOUR DETENTS" : "Haptics: SINGLE CENTRE");
+    Serial.println(zeroTest ? "Test: ZERO PWM (Uq=0); PWM stays active, motor is not OFF." : "Test: SPRING");
+    if (!zeroTest) Serial.println(fourDetents ? "Haptics: FOUR DETENTS" : "Haptics: SINGLE CENTRE");
+    Serial.println(holdBriefDropouts ? "Dropout mode: HOLD <2 ms" : "Dropout mode: ZERO immediately");
+    heldTicks = zeroedTicks = 0; heldOutput = false;
     crcErrors = trackLost = recoveries = weakFrames = 0;
     maximumError = maximumVoltage = angularSpeed = 0;
     encoder.init();
@@ -213,22 +236,38 @@ void controlTick(bool valid) {
         stopTest("Sensor dropout reached 5 ms"); return;
     }
     if (!valid) {
-        // Brief TRACK LOST: request zero voltage without cycling driver enable.
-        // The rejected angle never enters angleCache. With Uq=Ud=0 the
-        // centered PWM phases are equal, independent of the cached angle.
-        // This is not driver OFF or a guarantee of zero physical current.
-        // The existing 5 ms timeout still disables the driver completely.
         if (!suspended) { suspended = true; suspensionUs = micros(); }
+        // Experimental bounded zero-order hold. Do not use the flagged angle,
+        // extrapolate motion, or update FOC while holding the previous PWM.
+        // Only hold at low last-known speed; CRC/driver faults still stop above.
+        if (holdBriefDropouts && !zeroTest && micros() - lastGoodUs < HOLD_US &&
+            fabsf(angularSpeed) < 2.0f) {
+            heldOutput = true;
+            ++heldTicks;
+            return;
+        }
+        heldOutput = false;
+        ++zeroedTicks;
         motor.move(0);
         motor.loopFOC();
         return;
     }
-    float error = detentError(angleCache);
+    float error = zeroTest ? wrapAngle(zeroStartAngle - angleCache) : detentError(angleCache);
     maximumError = max(maximumError, fabsf(error));
-    if (!fourDetents && fabsf(error) > TRAVEL_LIMIT) { stopTest("45-degree travel limit"); return; }
+    if ((zeroTest || !fourDetents) && fabsf(error) > TRAVEL_LIMIT) { stopTest("45-degree travel limit"); return; }
     if (fabsf(angularSpeed) > 15) { stopTest("Speed limit"); return; }
     if (suspended) {
-        motor.move(0); suspended = false; resumedUs = micros(); ++recoveries;
+        // A recovery after a hold must not inject a new zero pulse or ramp.
+        // If zero was applied, retain the original short recovery ramp.
+        if (!heldOutput) { motor.move(0); resumedUs = micros(); }
+        suspended = false; heldOutput = false; ++recoveries;
+    }
+    if (zeroTest) {
+        // Keep equal centered phase commands on every tick, including recovery.
+        // No spring calculation and no driver enable/disable cycling here.
+        motor.move(0);
+        motor.loopFOC();
+        return;
     }
     float ramp = min(1.0f, (millis() - startedMs) / 500.0f);
     // Short recovery ramp. Recoveries counts resumed valid data, not driver restarts.
@@ -249,7 +288,7 @@ void setup() {
     pinMode(BACKLIGHT, OUTPUT); digitalWrite(BACKLIGHT, LOW);
     pinMode(DRIVER_DIAG, INPUT);
     Serial.begin(115200); delay(2500);
-    Serial.println("\n=== SmartKnob spring comparison v3 - EXPERIMENTAL ===");
+    Serial.println("\n=== SmartKnob spring comparison v5 - EXPERIMENTAL ===");
     spi_bus_config_t bus = {};
     bus.mosi_io_num = -1; bus.miso_io_num = SENSOR_DATA; bus.sclk_io_num = SENSOR_CLK;
     bus.quadwp_io_num = -1; bus.quadhd_io_num = -1; bus.max_transfer_sz = 4;
@@ -291,6 +330,9 @@ void loop() {
     if (dt < 1000) return;
     previousTickUs = now;
     if (running && dt > 20000) { stopTest("Control loop delayed over 20 ms"); return; }
+    if (running && holdBriefDropouts && dt > HOLD_US) {
+        stopTest("Hold-mode loop gap exceeded 2 ms"); return;
+    }
     bool valid = readSensor();
     controlTick(valid);
     static uint32_t lastReport = 0;
