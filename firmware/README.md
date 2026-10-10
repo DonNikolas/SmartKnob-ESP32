@@ -289,3 +289,51 @@ The angle sensor warnings documented above remain unresolved.
 ChatGPT generated the test code.
 I built and uploaded the firmware, tested both directions
 and recorded the video.
+
+## Motor calibration diagnostics
+
+Date: 2026-10-09
+
+The calibration test uses an approach based on Scott Bezek's SmartKnob.
+The Seedlabs implementation was also reviewed.
+ChatGPT helped adapt the code to my PCB and add diagnostic checks.
+
+Two full-turn profiles were recorded at a motor voltage setting of 0.50 V.
+The rotor was moved by hand before the second test to change the starting position.
+
+Results:
+- Both tests indicated seven pole pairs and CCW sensor direction.
+- No CRC errors were recorded.
+- Weak-field warnings and TRACK LOST samples remained present.
+- Position-dependent and direction-dependent deviations were observed.
+- Both tests failed the additional offset consistency checks.
+
+The virtual spring remains disabled.
+Position-dependent compensation has not been implemented or tested yet.
+
+Test logs:
+- [First profile](docs/tests/motor-offset-profile-01.txt)
+- [Second profile](docs/tests/motor-offset-profile-02.txt)
+
+## Four-detent motor test
+
+Date: 2026-10-10
+
+The motor was tested with four detents spaced 90 degrees apart.
+The reference position is set manually before starting the test.
+
+- Voltage limit: 0.60 V.
+- Spring stiffness: 3.00 V/rad.
+- Each test runs for 10 seconds.
+- The motor pulls towards the selected detent.
+- Brief tracking errors request zero voltage without restarting the driver.
+
+The four detents could be felt during testing.
+Crackling was reduced, but is still present.
+The sensor still reports a weak magnetic field and tracking errors.
+Longer testing, current measurements and temperature checks are still pending.
+
+ChatGPT helped create and revise the test code.
+I uploaded the firmware and tested it on my PCB.
+
+[Four-detent demo video](docs/videos/four-detents-demo.mp4)
