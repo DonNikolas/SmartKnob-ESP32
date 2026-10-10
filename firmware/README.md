@@ -314,3 +314,26 @@ Position-dependent compensation has not been implemented or tested yet.
 Test logs:
 - [First profile](docs/tests/motor-offset-profile-01.txt)
 - [Second profile](docs/tests/motor-offset-profile-02.txt)
+
+## Four-detent motor test
+
+Date: 2026-10-10
+
+The motor was tested with four detents spaced 90 degrees apart.
+The reference position is set manually before starting the test.
+
+- Voltage limit: 0.60 V.
+- Spring stiffness: 3.00 V/rad.
+- Each test runs for 10 seconds.
+- The motor pulls towards the selected detent.
+- Brief tracking errors request zero voltage without restarting the driver.
+
+The four detents could be felt during testing.
+Crackling was reduced, but is still present.
+The sensor still reports a weak magnetic field and tracking errors.
+Longer testing, current measurements and temperature checks are still pending.
+
+ChatGPT helped create and revise the test code.
+I uploaded the firmware and tested it on my PCB.
+
+[Four-detent demo video](docs/videos/four-detents-demo.mp4)
