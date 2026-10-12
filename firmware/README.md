@@ -354,3 +354,26 @@ a spring stiffness of 3.00 V/rad.
 Weak-field warnings and tracking errors are still present.
 This test improves dropout handling; it does not fix the sensor.
 Long-term reliability, current draw and temperature remain unverified.
+
+## Combined controls test
+
+Date: 2026-10-12
+
+Motor, pressure input, display and LED ring now work together.
+
+- Twelve motor detents select positions 01 to 12.
+- Position 01 starts at 6 o'clock.
+- Turning counterclockwise advances the selection.
+- Pressing confirms the selection with motor feedback.
+- The rotation mapping was corrected.
+- Display SPI speed was increased from 1 MHz to 8 MHz.
+- Unnecessary display redraws were reduced.
+
+The combined test worked well during the initial manual test.
+Longer testing is still pending. The sensor's weak-field warning
+remains unresolved.
+
+ChatGPT helped combine the test programs and fix the direction
+and display updates. I uploaded and tested the code on my PCB.
+
+[Demo video](docs/videos/combined-controls-demo.mp4)
