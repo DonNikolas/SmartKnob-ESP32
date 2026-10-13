@@ -377,3 +377,27 @@ ChatGPT helped combine the test programs and fix the direction
 and display updates. I uploaded and tested the code on my PCB.
 
 [Demo video](docs/videos/combined-controls-demo.mp4)
+
+## App GUI
+
+Date: 2026-10-13
+
+- Built and uploaded successfully.
+- Tested the app carousel with motor detents and pressure input.
+- Display movement and LED colour transitions worked smoothly.
+- Added a Sensors app for BME280 readings.
+- Integrated double-clap detection with a short white LED flash.
+- Recorded a demo on the assembled PCB.
+
+Settings are currently kept in RAM only. Timer, Music, Light and
+Temperature are local controls without external-device connections.
+
+Longer testing, clap false-trigger checks and motor temperature
+checks are still pending. The weak magnetic field warning remains
+unresolved.
+
+ChatGPT helped generate and adapt the code. I defined the behaviour,
+built and uploaded the firmware, and tested it on my PCB.
+
+[Demo video](docs/videos/app-gui-demo.mp4)
+[Implementation and test notes](docs/tests/app-gui-plan.md)
