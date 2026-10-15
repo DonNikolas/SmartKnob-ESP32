@@ -12,6 +12,7 @@
 #include "app_gui/model.h"
 #include "app_gui/pressure.h"
 #include "app_gui/view.h"
+#include "app_gui/settings_store.h"
 
 constexpr float TAU_F = 6.28318530718f, PI_F = TAU_F / 2, DEG_TO_RAD_F = PI_F / 180;
 constexpr uint8_t MOTOR_PINS[] = {4, 7, 5, 16, 6, 15};
@@ -25,6 +26,9 @@ constexpr float ELECTRICAL_ZERO = (22.04286664f + 270) * DEG_TO_RAD_F;
 // Same baseline commutation as the tested combined controls, not a new calibration.
 KnobApp::Model app;
 KnobPressure::Input pressure;
+KnobSettings::Record savedSettings, observedSettings;
+uint32_t settingsChangedAt = 0, settingsAttemptAt = 0, settingsQuietAt = 0;
+bool settingsAttempted = false;
 bool ready = false, running = false, suspended = false, heldOutput = false;
 bool good = false, lost = false, haveAngle = false, latchedStop = false;
 float angleCache = 0, previousRaw = 0, angularSpeed = 0, filterX = 0, filterY = 0;
@@ -226,10 +230,37 @@ void handleGesture(KnobPressure::Event event) {
     else if (event == E::Long) app.longPress(millis());
     changedView(before);
 }
+void serviceSettings() {
+    auto current = KnobSettings::capture(app.state);
+    const uint32_t now = millis();
+    if (!KnobSettings::equal(current, observedSettings)) {
+        observedSettings = current; settingsChangedAt = now;
+    }
+    app.state.settingsPending = !KnobSettings::equal(current, savedSettings);
+    if (!app.state.settingsPending) { app.state.settingsFailed = false; return; }
+    // Coalesce changes, including values in an open editor. Require a quiet,
+    // released interval before disabling the motor and writing the settings.
+    if (pressure.pressed || clickStage || fabsf(angularSpeed) > 0.15f) settingsQuietAt = now;
+    if (now - settingsChangedAt < 2000 || now - app.state.activityAt < 2000 ||
+        pressure.pressed || clickStage || !good || !pressure.releasedReady(now) ||
+        fabsf(angularSpeed) > 0.15f || now - settingsQuietAt < 500) return;
+    if (app.state.settingsFailed && settingsAttempted && now-settingsAttemptAt < 30000) return;
+    // NVS writes may stall both cores. Disable PWM BEFORE invoking Preferences.
+    disableMotor(); KnobBackground::suppressClick(); publish();
+    const bool ok = KnobSettings::save(current);
+    settingsAttemptAt = millis(); settingsAttempted = true;
+    if (ok) savedSettings = current;
+    app.state.settingsPending = !ok; app.state.settingsFailed = !ok;
+    if (!ok) Serial.println("Settings save failed; retry when idle. Motor is OFF during writes.");
+    // Next iteration obtains a fresh encoder sample before the normal guarded start.
+    angularSpeed = 0; previousTickUs = micros(); publish();
+}
 void setup() {
     for (uint8_t pin : MOTOR_PINS) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
     pinMode(9, OUTPUT); digitalWrite(9, LOW); pinMode(DRIVER_DIAG, INPUT);
     Serial.begin(115200);
+    KnobSettings::load(app.state);
+    savedSettings = observedSettings = KnobSettings::capture(app.state);
     if (!KnobView::begin()) { stop("GUI initialization failed"); return; }
     spi_bus_config_t bus = {};
     bus.mosi_io_num = -1; bus.miso_io_num = SENSOR_DATA; bus.sclk_io_num = SENSOR_CLK;
@@ -262,7 +293,12 @@ void loop() {
         if (key == 'x' || key == 'X') stop("Stopped by user", false);
         else if (key == 'r' && latchedStop) { disableMotor(); ESP.restart(); }
     }
-    if (!ready || latchedStop) { delay(5); return; }
+    app.updateTimer(millis());
+    if (!ready || latchedStop) {
+        static uint32_t lastStoppedPublish = 0;
+        if (millis()-lastStoppedPublish >= 250) { lastStoppedPublish=millis(); publish(); }
+        delay(5); return;
+    }
     uint32_t now = micros(), gap = now - previousTickUs;
     if (gap < 1000) return;
     previousTickUs = now;
@@ -300,6 +336,7 @@ void loop() {
         }
         if (app.interactive() && !running && !consumeGesture) startMotor();
     }
+    if (app.state.screen != KnobApp::Screen::Boot) serviceSettings();
     static uint32_t lastPublish = 0;
     if (millis() - lastPublish >= 10) { lastPublish = millis(); publish(); }
 }

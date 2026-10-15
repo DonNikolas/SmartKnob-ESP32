@@ -34,10 +34,11 @@ QueueHandle_t states = nullptr, resultQueue = nullptr;
 lv_color_t pixels[240 * 20];
 lv_disp_draw_buf_t drawBuffer;
 lv_disp_drv_t displayDriver;
-lv_obj_t *views[10], *cards[APP_COUNT], *homeTitle, *homeValue;
+lv_obj_t *views[11], *cards[APP_COUNT], *homeTitle, *homeValue;
 lv_obj_t *valueTitle, *valueText, *valueUnit, *valueIcon, *valueDots[36];
 lv_obj_t *menuFocus, *menuRows[4], *noticeTitle, *noticeText, *noticeIcon;
 lv_obj_t *sensorTemperature, *sensorHumidity, *sensorPressure, *sensorStatus, *audioStatus;
+lv_obj_t *timerArc, *timerText, *timerStatus, *settingsError;
 lv_obj_t *bootText, *stopTitle, *stopReason, *faultReason;
 enum Icon { KNOB_ICON_TIMER, KNOB_ICON_MUSIC, KNOB_ICON_SUN, KNOB_ICON_THERMO,
  KNOB_ICON_DISPLAY, KNOB_ICON_MORE, KNOB_ICON_CHECK, KNOB_ICON_CROSS, KNOB_ICON_INFO, KNOB_ICON_PLANE };
@@ -201,13 +202,17 @@ void showRadar(const State& s) {
     lv_label_set_text(radarStatus,text);
 }
 
+void timerTextFormat(char* text, size_t size, uint32_t remaining) {
+    const uint32_t seconds=(remaining+999)/1000;
+    snprintf(text,size,"%02lu:%02lu",(unsigned long)(seconds/60),(unsigned long)(seconds%60));
+}
 void createViews() {
     lv_obj_t* root = lv_scr_act();
     lv_obj_set_style_bg_color(root, color(UI_BG), 0);
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 11; ++i) {
         views[i] = box(root, 240, 240);
         lv_obj_add_flag(views[i], LV_OBJ_FLAG_HIDDEN);
     }
@@ -237,6 +242,15 @@ void createViews() {
     radarDetails = label(v,"",&knob_font_18,65,UI_TEXT,210);
     radarStatus = label(v,"Starting network",&knob_font_14,191,UI_MUTED,208);
     label(v,"adsb.fi",&knob_font_14,213,UI_MUTED,120);
+    v = views[viewIndex(Screen::Timer)];
+    timerArc=lv_arc_create(v);lv_obj_set_size(timerArc,210,210);lv_obj_center(timerArc);
+    lv_obj_remove_style(timerArc,nullptr,LV_PART_KNOB);lv_obj_clear_flag(timerArc,LV_OBJ_FLAG_CLICKABLE);
+    lv_arc_set_rotation(timerArc,270);lv_arc_set_bg_angles(timerArc,0,360);lv_arc_set_range(timerArc,0,1000);
+    lv_obj_set_style_arc_width(timerArc,6,LV_PART_MAIN);lv_obj_set_style_arc_color(timerArc,color(UI_TRACK),LV_PART_MAIN);
+    lv_obj_set_style_arc_width(timerArc,6,LV_PART_INDICATOR);lv_obj_set_style_arc_color(timerArc,color(APPS[0].colour),LV_PART_INDICATOR);
+    label(v,"TIMER",&knob_font_16,48,APPS[0].colour);
+    timerText=label(v,"15:00",&knob_font_52,84,UI_TEXT,220);
+    timerStatus=label(v,"Running",&knob_font_18,151,UI_MUTED);
     v = views[viewIndex(Screen::Value)];
     for (int i = 0; i < LED_COUNT; ++i) {
         const float angle = (90 - i * 360.0f / LED_COUNT) * kKnobPi / 180;
@@ -273,6 +287,8 @@ void createViews() {
     label(v, "Motor stopped", &knob_font_24, 48, 0xFF8B86);
     faultReason = label(v, "Check hardware", &knob_font_14, 94, UI_TEXT, 178);
     label(v, "Reset / r after checking", &knob_font_14, 177, UI_MUTED, 180);
+    settingsError=label(root,"Settings not saved",&knob_font_14,200,0xFF5040,200);
+    lv_obj_add_flag(settingsError,LV_OBJ_FLAG_HIDDEN);
 }
 // Follow the measured knob position, including its physical spring return.
 // No extra spring integration or queued animation creates visual lag.
@@ -323,7 +339,9 @@ void home(const State& s, bool textChanged = true) {
     if (!textChanged) return;
     lv_label_set_text(homeTitle, APPS[s.selected].name);
     char n[16], text[40];
-    if (s.selected == MORE_APP) snprintf(text, sizeof(text), "%s", "");
+    if (s.selected == 0 && s.timerDone) snprintf(text,sizeof(text),"Finished");
+    else if (s.selected == 0 && s.timerRemaining) timerTextFormat(text,sizeof(text),s.timerRemaining);
+    else if (s.selected == MORE_APP) snprintf(text, sizeof(text), "%s", "");
     else if (s.selected == SENSOR_APP || s.selected == RADAR_APP) snprintf(text, sizeof(text), "%s", "");
     else {
         numberText(n, sizeof(n), s.values[s.selected], APPS[s.selected]);
@@ -334,6 +352,10 @@ void home(const State& s, bool textChanged = true) {
 }
 void render(const State& s, const State& old, bool first) {
     bool changed = first || s.screen != old.screen;
+    if(first || s.settingsFailed != old.settingsFailed) {
+        if(s.settingsFailed)lv_obj_clear_flag(settingsError,LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(settingsError,LV_OBJ_FLAG_HIDDEN);
+    }
     if (changed) {
         for (auto* view : views) lv_obj_add_flag(view, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(views[viewIndex(s.screen)], LV_OBJ_FLAG_HIDDEN);
@@ -341,8 +363,18 @@ void render(const State& s, const State& old, bool first) {
     switch (s.screen) {
     case Screen::Home: {
         bool moved = updateCarousel(s, changed);
-        bool textChanged = changed || s.selected != old.selected || memcmp(s.values, old.values, sizeof(s.values));
+        bool textChanged = changed || s.selected != old.selected || memcmp(s.values, old.values, sizeof(s.values)) ||
+            (s.selected == 0 && ((s.timerRemaining+999)/1000 != (old.timerRemaining+999)/1000 || s.timerDone != old.timerDone));
         if (moved || textChanged) home(s, textChanged);
+        break;
+    }
+    case Screen::Timer: {
+        if(changed || (s.timerRemaining+999)/1000 != (old.timerRemaining+999)/1000 ||
+           s.timerRunning!=old.timerRunning || s.timerDone!=old.timerDone) {
+            char text[20];timerTextFormat(text,sizeof(text),s.timerRemaining);lv_label_set_text(timerText,text);
+            lv_label_set_text(timerStatus,s.timerDone?"Finished":s.timerRunning?"Running":"Paused");
+            lv_arc_set_value(timerArc,s.timerTotal?uint64_t(s.timerRemaining)*1000/s.timerTotal:0);
+        }
         break;
     }
     case Screen::Radar: {
@@ -445,11 +477,24 @@ void drawHomeGlow(const State& s, bool flash) {
         ring.setPixelColor(ledIndex(i), ledBlend(0, tint, intensity));
     }
 }
-void drawRing(const State& s, bool flash, bool clapFlash = false) {
+void drawRing(const State& s, bool flash, bool clapFlash = false, bool timerFlash = false) {
     ring.clear();
     uint32_t tint = APPS[s.selected].colour;
     auto set = [&](int offset, uint32_t rgb) { ring.setPixelColor(ledIndex(offset), rgb); };
     if (s.screen == Screen::Home) drawHomeGlow(s, flash);
+        else if (s.screen == Screen::Timer) {
+            const float filled = s.timerTotal
+                ? float(s.timerRemaining) * LED_COUNT / s.timerTotal
+                : 0;
+
+        // Start at 12 o'clock and fill clockwise, matching the display.
+        // As time decreases, the endpoint retreats counterclockwise.
+        for (int i = 0; i < LED_COUNT; ++i) {
+            const int offset = LED_COUNT / 2 - i;
+            const float intensity = fmaxf(0, fminf(1, filled - i));
+            set(offset, ledBlend(0, APPS[0].colour, intensity));
+        }
+    }
     else if (s.screen == Screen::Value) {
         const App& a = APPS[s.selected];
         float filled = float(s.draft - a.low) * LED_COUNT / (a.high - a.low);
@@ -465,6 +510,8 @@ void drawRing(const State& s, bool flash, bool clapFlash = false) {
     // Fault/stop indication takes precedence. A clap never changes app/motor state.
     if (clapFlash && s.screen != Screen::Fault && s.screen != Screen::Stopped)
         for (int i = 0; i < LED_COUNT; ++i) set(i, 0xFFFFFF);
+    if(timerFlash && s.screen != Screen::Fault && s.screen != Screen::Stopped)
+        for(int i=0;i<LED_COUNT;++i)set(i,APPS[0].colour);
     ring.show();
 }
 int brightness(const State& s) {
@@ -488,7 +535,7 @@ void task(void*) {
     xQueueSend(resultQueue, &ok, 0);
     KnobBackground::Environment environment; KnobBackground::Audio audio;
     uint32_t pairsSeen = 0, clapAt = 0; bool clapActive = false, lastClapFlash = false;
-    bool first = true, lastFlash = false, flashing = false;
+    bool first = true, lastFlash = false, flashing = false, lastTimerFlash = false;
     uint32_t previousTick = millis(), clickCount = 0, flashAt = 0;
     for (;;) {
         State next; if (xQueueReceive(states, &next, 0) == pdTRUE) s = next;
@@ -507,13 +554,15 @@ void task(void*) {
         bool clapFlash = clapActive && now - clapAt < 200;
         if (!clapFlash) clapActive = false;
         if (s.clicks != clickCount) { clickCount = s.clicks; flashAt = now; flashing = true; }
+        bool timerFlash = s.timerDone && now-s.timerDoneAt < 10000 && ((now-s.timerDoneAt)/500)%2==0;
         bool flash = flashing && now - flashAt < 150; if (!flash) flashing = false;
         if (first || s.screen != old.screen || s.selected != old.selected || s.menu != old.menu ||
             s.draft != old.draft || s.notice != old.notice || flash != lastFlash || clapFlash != lastClapFlash ||
-            (s.screen == Screen::Home && fabsf(s.homeOffset - old.homeOffset) > 0.0001f)) drawRing(s, flash, clapFlash);
+            timerFlash != lastTimerFlash || (s.screen == Screen::Timer && s.timerRemaining/1000 != old.timerRemaining/1000) ||
+            (s.screen == Screen::Home && fabsf(s.homeOffset - old.homeOffset) > 0.0001f)) drawRing(s, flash, clapFlash, timerFlash);
         if (first || brightness(s) != brightness(old)) ledcWrite(0, brightness(s) * 1023UL / 100);
         render(s, old, first);
-        old = s; first = false; lastFlash = flash; lastClapFlash = clapFlash;
+        old = s; first = false; lastFlash = flash; lastClapFlash = clapFlash; lastTimerFlash = timerFlash;
         lv_tick_inc(now - previousTick); previousTick = now; lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(5));
     }
