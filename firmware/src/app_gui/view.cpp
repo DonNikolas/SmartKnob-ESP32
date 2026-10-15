@@ -10,6 +10,7 @@
 #include <math.h>
 #include <string.h>
 #include "view.h"
+#include "radar.h"
 #include "knob_fonts.h"
 
 #if !CONFIG_IDF_TARGET_ESP32S3 || ARDUINO_RUNNING_CORE != 1
@@ -33,15 +34,15 @@ QueueHandle_t states = nullptr, resultQueue = nullptr;
 lv_color_t pixels[240 * 20];
 lv_disp_draw_buf_t drawBuffer;
 lv_disp_drv_t displayDriver;
-lv_obj_t *views[9], *cards[APP_COUNT], *homeTitle, *homeValue;
+lv_obj_t *views[10], *cards[APP_COUNT], *homeTitle, *homeValue;
 lv_obj_t *valueTitle, *valueText, *valueUnit, *valueIcon, *valueDots[36];
 lv_obj_t *menuFocus, *menuRows[4], *noticeTitle, *noticeText, *noticeIcon;
 lv_obj_t *sensorTemperature, *sensorHumidity, *sensorPressure, *sensorStatus, *audioStatus;
 lv_obj_t *bootText, *stopTitle, *stopReason, *faultReason;
 enum Icon { KNOB_ICON_TIMER, KNOB_ICON_MUSIC, KNOB_ICON_SUN, KNOB_ICON_THERMO,
- KNOB_ICON_DISPLAY, KNOB_ICON_MORE, KNOB_ICON_CHECK, KNOB_ICON_CROSS, KNOB_ICON_INFO };
+ KNOB_ICON_DISPLAY, KNOB_ICON_MORE, KNOB_ICON_CHECK, KNOB_ICON_CROSS, KNOB_ICON_INFO, KNOB_ICON_PLANE };
 Icon homeIcons[APP_COUNT] = {KNOB_ICON_TIMER, KNOB_ICON_MUSIC, KNOB_ICON_SUN,
-                    KNOB_ICON_THERMO, KNOB_ICON_DISPLAY, KNOB_ICON_THERMO, KNOB_ICON_MORE};
+                    KNOB_ICON_THERMO, KNOB_ICON_DISPLAY, KNOB_ICON_THERMO, KNOB_ICON_PLANE, KNOB_ICON_MORE};
 Icon editorIcon = KNOB_ICON_TIMER, messageIcon = KNOB_ICON_CHECK;
 const char* menuNames[] = {"Info", "Status demo", "Standby", "Back"};
 lv_color_t color(uint32_t rgb) { return lv_color_hex(rgb); }
@@ -88,6 +89,9 @@ void iconDraw(lv_event_t *e) {
         lv_draw_arc(ctx, &a, &c, (uint16_t)lroundf(radius * s), 0, 360);
     };
     switch (icon) {
+        case KNOB_ICON_PLANE:
+            line(20, 4, 20, 35); line(20, 12, 5, 25); line(20, 12, 35, 25);
+            line(20, 29, 13, 35); line(20, 29, 27, 35); break;
         case KNOB_ICON_MUSIC:
             line(16, 29, 16, 11); line(16, 11, 31, 7); line(31, 7, 31, 25);
             circle(11, 29, 5, true); circle(26, 25, 5, true); break;
@@ -143,13 +147,67 @@ int fillCount(const State& s) {
     if (!a.step) return 0;
     return (s.draft - a.low) * LED_COUNT / (a.high - a.low);
 }
+KnobRadar::Snapshot radarData;
+lv_obj_t *radarPlot, *radarTitle, *radarStatus, *radarDetails;
+int radarRange = 25;
+void radarDraw(lv_event_t* event) {
+    auto* ctx=lv_event_get_draw_ctx(event);
+    lv_area_t area;lv_obj_get_coords(lv_event_get_target(event),&area);
+    lv_point_t centre={(lv_coord_t)(area.x1+120),(lv_coord_t)(area.y1+111)};
+    lv_draw_arc_dsc_t arc;lv_draw_arc_dsc_init(&arc);arc.color=color(UI_TRACK);arc.width=1;
+    lv_draw_arc(ctx,&arc,&centre,78,0,360);lv_draw_arc(ctx,&arc,&centre,39,0,360);
+    lv_draw_line_dsc_t line;lv_draw_line_dsc_init(&line);line.color=color(UI_TRACK);line.width=1;
+    lv_point_t a={(lv_coord_t)(centre.x-78),centre.y}, b={(lv_coord_t)(centre.x+78),centre.y};
+    lv_draw_line(ctx,&line,&a,&b);
+    a={centre.x,(lv_coord_t)(centre.y-78)};b={centre.x,(lv_coord_t)(centre.y+78)};lv_draw_line(ctx,&line,&a,&b);
+    arc.color=color(UI_TEXT);arc.width=3;lv_draw_arc(ctx,&arc,&centre,3,0,360);
+    if(!radarData.valid || millis()-radarData.receivedAt>60000)return;
+    bool stale=millis()-radarData.receivedAt>30000;
+    line.color=color(stale?UI_MUTED:APPS[RADAR_APP].colour);line.width=2;
+    for(unsigned i=0;i<radarData.count;++i){
+        const auto& p=radarData.aircraft[i];if(p.distance>radarRange)continue;
+        float x=centre.x+p.east*78/radarRange,y=centre.y-p.north*78/radarRange;
+        if(!p.hasTrack){arc.color=line.color;arc.width=3;lv_point_t c={(lv_coord_t)lroundf(x),(lv_coord_t)lroundf(y)};lv_draw_arc(ctx,&arc,&c,3,0,360);continue;}
+        float t=p.track*kKnobPi/180,dx=sinf(t),dy=-cosf(t);
+        lv_point_t tip={(lv_coord_t)lroundf(x+5*dx),(lv_coord_t)lroundf(y+5*dy)};
+        lv_point_t left={(lv_coord_t)lroundf(x-3*dx-3*dy),(lv_coord_t)lroundf(y-3*dy+3*dx)};
+        lv_point_t right={(lv_coord_t)lroundf(x-3*dx+3*dy),(lv_coord_t)lroundf(y-3*dy-3*dx)};
+        lv_draw_line(ctx,&line,&tip,&left);lv_draw_line(ctx,&line,&left,&right);lv_draw_line(ctx,&line,&right,&tip);
+    }
+}
+void showRadar(const State& s) {
+    radarRange=KnobRadar::RANGES[s.radarRange];
+    char text[180];uint32_t age=(millis()-radarData.receivedAt)/1000;
+    unsigned indices[KnobRadar::MAX_AIRCRAFT],count=0;
+    if(radarData.valid && age<=60)for(unsigned i=0;i<radarData.count;++i)
+        if(radarData.aircraft[i].distance<=radarRange)indices[count++]=i;
+    snprintf(text,sizeof(text),"%d km   N",radarRange);lv_label_set_text(radarTitle,text);
+    if(s.radarDetails){
+        lv_obj_add_flag(radarPlot,LV_OBJ_FLAG_HIDDEN);lv_obj_clear_flag(radarDetails,LV_OBJ_FLAG_HIDDEN);
+        if(!count)lv_label_set_text(radarDetails,"No aircraft\nin this range");
+        else {
+            int index=wrap(s.radarAircraft,count);const auto& p=radarData.aircraft[indices[index]];
+            char altitude[24]="-- m",speed[24]="-- km/h";
+            if(p.hasAltitude)snprintf(altitude,sizeof(altitude),"%.0f m",p.altitude);
+            if(p.hasSpeed)snprintf(speed,sizeof(speed),"%.0f km/h",p.speed);
+            snprintf(text,sizeof(text),"%s\n%s  |  %.1f km\n%s  /  %s\n%d / %u",p.callsign,p.type,p.distance,altitude,speed,index+1,count);
+            lv_label_set_text(radarDetails,text);
+        }
+    }else{lv_obj_clear_flag(radarPlot,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(radarDetails,LV_OBJ_FLAG_HIDDEN);lv_obj_invalidate(radarPlot);}
+    if(!radarData.valid)snprintf(text,sizeof(text),"%s",radarData.status);
+    else if(age>30)snprintf(text,sizeof(text),"Stale / %lu s",(unsigned long)age);
+    else if(strcmp(radarData.status,"Live"))snprintf(text,sizeof(text),"%s",radarData.status);
+    else snprintf(text,sizeof(text),"%u aircraft / %lu s",count,(unsigned long)age);
+    lv_label_set_text(radarStatus,text);
+}
+
 void createViews() {
     lv_obj_t* root = lv_scr_act();
     lv_obj_set_style_bg_color(root, color(UI_BG), 0);
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 10; ++i) {
         views[i] = box(root, 240, 240);
         lv_obj_add_flag(views[i], LV_OBJ_FLAG_HIDDEN);
     }
@@ -173,6 +231,12 @@ void createViews() {
     sensorPressure = label(v, "----.- hPa", &knob_font_24, 123);
     sensorStatus = label(v, "Starting sensor", &knob_font_14, 161, UI_MUTED);
     audioStatus = label(v, "Starting microphone", &knob_font_14, 182, UI_MUTED);
+    v = views[viewIndex(Screen::Radar)];
+    radarPlot = box(v,240,240);lv_obj_add_event_cb(radarPlot,radarDraw,LV_EVENT_DRAW_MAIN,nullptr);
+    radarTitle = label(v,"25 km   N",&knob_font_16,10,APPS[RADAR_APP].colour);
+    radarDetails = label(v,"",&knob_font_18,65,UI_TEXT,210);
+    radarStatus = label(v,"Starting network",&knob_font_14,191,UI_MUTED,208);
+    label(v,"adsb.fi",&knob_font_14,213,UI_MUTED,120);
     v = views[viewIndex(Screen::Value)];
     for (int i = 0; i < LED_COUNT; ++i) {
         const float angle = (90 - i * 360.0f / LED_COUNT) * kKnobPi / 180;
@@ -260,7 +324,7 @@ void home(const State& s, bool textChanged = true) {
     lv_label_set_text(homeTitle, APPS[s.selected].name);
     char n[16], text[40];
     if (s.selected == MORE_APP) snprintf(text, sizeof(text), "%s", "");
-    else if (s.selected == SENSOR_APP) snprintf(text, sizeof(text), "%s", "");
+    else if (s.selected == SENSOR_APP || s.selected == RADAR_APP) snprintf(text, sizeof(text), "%s", "");
     else {
         numberText(n, sizeof(n), s.values[s.selected], APPS[s.selected]);
         snprintf(text, sizeof(text), "%s %s", n, APPS[s.selected].unit);
@@ -279,6 +343,14 @@ void render(const State& s, const State& old, bool first) {
         bool moved = updateCarousel(s, changed);
         bool textChanged = changed || s.selected != old.selected || memcmp(s.values, old.values, sizeof(s.values));
         if (moved || textChanged) home(s, textChanged);
+        break;
+    }
+    case Screen::Radar: {
+        static uint32_t sequence=~0U, second=~0U;
+        if(changed || sequence!=radarData.sequence || second!=millis()/1000 ||
+           s.radarRange!=old.radarRange || s.radarDetails!=old.radarDetails || s.radarAircraft!=old.radarAircraft) {
+            showRadar(s);sequence=radarData.sequence;second=millis()/1000;
+        }
         break;
     }
     case Screen::Sensors:
@@ -389,7 +461,7 @@ void drawRing(const State& s, bool flash, bool clapFlash = false) {
     else if (s.screen == Screen::Status) set(s.selected * LED_COUNT / APP_COUNT, s.notice == Notice::Demo ? 0xFF5040 : 0x55D98B);
     else if (s.screen == Screen::Boot) set(0, 0xFFB850);
     else if (s.screen == Screen::Stopped || s.screen == Screen::Fault) set(0, 0xFF3020);
-    if (s.screen == Screen::Sensors) drawHomeGlow(s, flash);
+    if (s.screen == Screen::Sensors || s.screen == Screen::Radar) drawHomeGlow(s, flash);
     // Fault/stop indication takes precedence. A clap never changes app/motor state.
     if (clapFlash && s.screen != Screen::Fault && s.screen != Screen::Stopped)
         for (int i = 0; i < LED_COUNT; ++i) set(i, 0xFFFFFF);
@@ -411,6 +483,7 @@ void task(void*) {
     createViews();
     State s, old; render(s, old, true); drawRing(s, false); lv_refr_now(nullptr);
     ledcSetup(0, 5000, 10); ledcAttachPin(9, 0); ledcWrite(0, 818);
+    KnobRadar::begin();
     KnobBackground::begin();
     xQueueSend(resultQueue, &ok, 0);
     KnobBackground::Environment environment; KnobBackground::Audio audio;
@@ -420,6 +493,8 @@ void task(void*) {
     for (;;) {
         State next; if (xQueueReceive(states, &next, 0) == pdTRUE) s = next;
         uint32_t now = millis();
+        KnobRadar::active(s.screen == Screen::Radar);
+        KnobRadar::read(radarData);
         KnobBackground::read(environment, audio);
         s.environment = environment; s.audio = audio;
         if (s.environment.valid && now - s.environment.measuredAt > 6000) {
