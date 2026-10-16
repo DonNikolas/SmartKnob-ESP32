@@ -12,6 +12,8 @@
 #include "view.h"
 #include "radar.h"
 #include "light_link.h"
+#include "home_feeds.h"
+#include <time.h>
 #include "knob_fonts.h"
 
 #if !CONFIG_IDF_TARGET_ESP32S3 || ARDUINO_RUNNING_CORE != 1
@@ -35,18 +37,20 @@ QueueHandle_t states = nullptr, resultQueue = nullptr;
 lv_color_t pixels[240 * 20];
 lv_disp_draw_buf_t drawBuffer;
 lv_disp_drv_t displayDriver;
-lv_obj_t *views[12], *cards[APP_COUNT], *homeTitle, *homeValue;
+lv_obj_t *views[13], *cards[APP_COUNT], *homeTitle, *homeValue;
 lv_obj_t *valueTitle, *valueText, *valueUnit, *valueIcon, *valueDots[36];
 lv_obj_t *menuFocus, *menuRows[4], *noticeTitle, *noticeText, *noticeIcon;
 lv_obj_t *sensorTemperature, *sensorHumidity, *sensorPressure, *sensorStatus, *audioStatus;
+KnobHomeFeeds::Snapshot homeData;
+lv_obj_t *feedName,*feedValue,*feedUnit,*feedStatus;
 KnobLight::Snapshot lightData;
 lv_obj_t *lightAction, *lightStatus;
 lv_obj_t *timerArc, *timerText, *timerStatus, *settingsError;
 lv_obj_t *bootText, *stopTitle, *stopReason, *faultReason;
 enum Icon { KNOB_ICON_TIMER, KNOB_ICON_MUSIC, KNOB_ICON_SUN, KNOB_ICON_THERMO,
- KNOB_ICON_DISPLAY, KNOB_ICON_MORE, KNOB_ICON_CHECK, KNOB_ICON_CROSS, KNOB_ICON_INFO, KNOB_ICON_PLANE };
+ KNOB_ICON_DISPLAY, KNOB_ICON_MORE, KNOB_ICON_CHECK, KNOB_ICON_CROSS, KNOB_ICON_INFO, KNOB_ICON_PLANE, KNOB_ICON_HOME };
 Icon homeIcons[APP_COUNT] = {KNOB_ICON_TIMER, KNOB_ICON_MUSIC, KNOB_ICON_SUN,
-                    KNOB_ICON_THERMO, KNOB_ICON_DISPLAY, KNOB_ICON_THERMO, KNOB_ICON_PLANE, KNOB_ICON_MORE};
+                    KNOB_ICON_THERMO, KNOB_ICON_DISPLAY, KNOB_ICON_THERMO, KNOB_ICON_PLANE, KNOB_ICON_MORE, KNOB_ICON_HOME};
 Icon editorIcon = KNOB_ICON_TIMER, messageIcon = KNOB_ICON_CHECK;
 const char* menuNames[] = {"Info", "Status demo", "Standby", "Back"};
 lv_color_t color(uint32_t rgb) { return lv_color_hex(rgb); }
@@ -93,6 +97,9 @@ void iconDraw(lv_event_t *e) {
         lv_draw_arc(ctx, &a, &c, (uint16_t)lroundf(radius * s), 0, 360);
     };
     switch (icon) {
+        case KNOB_ICON_HOME:
+            line(5,19,20,6);line(20,6,35,19);line(10,16,10,34);
+            line(10,34,30,34);line(30,34,30,16);line(18,34,18,23);line(18,23,24,23);line(24,23,24,34);break;
         case KNOB_ICON_PLANE:
             line(20, 4, 20, 35); line(20, 12, 5, 25); line(20, 12, 35, 25);
             line(20, 29, 13, 35); line(20, 29, 27, 35); break;
@@ -215,7 +222,7 @@ void createViews() {
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 13; ++i) {
         views[i] = box(root, 240, 240);
         lv_obj_add_flag(views[i], LV_OBJ_FLAG_HIDDEN);
     }
@@ -245,6 +252,11 @@ void createViews() {
     radarDetails = label(v,"",&knob_font_18,65,UI_TEXT,210);
     radarStatus = label(v,"Starting network",&knob_font_14,191,UI_MUTED,208);
     label(v,"adsb.fi",&knob_font_14,213,UI_MUTED,120);
+    v=views[viewIndex(Screen::HomeFeeds)];
+    feedName=label(v,"Home Sensors",&knob_font_18,37,APPS[HOME_FEEDS_APP].colour,210);
+    feedValue=label(v,"--",&knob_font_52,79,UI_TEXT,220);
+    feedUnit=label(v,"",&knob_font_18,137,UI_MUTED);
+    feedStatus=label(v,"",&knob_font_14,192,UI_MUTED,210);
     v = views[viewIndex(Screen::Light)];
     label(v,"LIGHT",&knob_font_16,35,APPS[2].colour);
     lightAction=label(v,"Ready",&knob_font_24,100,UI_TEXT,210);
@@ -348,7 +360,7 @@ void home(const State& s, bool textChanged = true) {
     char n[16], text[40];
     if (s.selected == 0 && s.timerDone) snprintf(text,sizeof(text),"Finished");
     else if (s.selected == 0 && s.timerRemaining) timerTextFormat(text,sizeof(text),s.timerRemaining);
-    else if (s.selected == MORE_APP || s.selected == 2) snprintf(text, sizeof(text), "%s", "");
+    else if (s.selected == MORE_APP || s.selected == 2 || s.selected == HOME_FEEDS_APP) snprintf(text, sizeof(text), "%s", "");
     else if (s.selected == SENSOR_APP || s.selected == RADAR_APP) snprintf(text, sizeof(text), "%s", "");
     else {
         numberText(n, sizeof(n), s.values[s.selected], APPS[s.selected]);
@@ -381,6 +393,29 @@ void render(const State& s, const State& old, bool first) {
             char text[20];timerTextFormat(text,sizeof(text),s.timerRemaining);lv_label_set_text(timerText,text);
             lv_label_set_text(timerStatus,s.timerDone?"Finished":s.timerRunning?"Running":"Paused");
             lv_arc_set_value(timerArc,s.timerTotal?uint64_t(s.timerRemaining)*1000/s.timerTotal:0);
+        }
+        break;
+    }
+    case Screen::HomeFeeds: {
+        static uint32_t seq=~0U,second=~0U;
+        if(changed || s.homeFeed!=old.homeFeed || seq!=homeData.sequence || second!=millis()/1000){
+            const auto& spec=KnobHomeFeeds::FEEDS[s.homeFeed];const auto& r=homeData.readings[s.homeFeed];
+            lv_label_set_text(feedName,spec.label);lv_label_set_text(feedUnit,spec.unit);
+            lv_obj_set_style_text_font(feedValue,spec.id==300?&knob_font_24:&knob_font_52,0);
+            char text[80];
+            if(spec.id==300) {
+                // Confirmed by the user: 1 = light ON, 0 = light OFF.
+                // Unexpected values are unknown, never coerced into a switch state.
+                snprintf(text,sizeof(text),"%s",!r.valid?"--":r.value==1?"ON":r.value==0?"OFF":"--");
+            } else if(r.valid && fabs(r.value)<1000000)snprintf(text,sizeof(text),"%.*f",int(spec.decimals),r.value);
+            else snprintf(text,sizeof(text),"--");
+            lv_label_set_text(feedValue,text);
+            int64_t age=int64_t(time(nullptr))-r.sourceTime;
+            bool stale=r.valid && age>KnobHomeFeeds::STALE_SECONDS;
+            // Quiet UI: retain subtle stale-value dimming, show only pagination below.
+            lv_obj_set_style_text_color(feedValue,color(stale?UI_MUTED:UI_TEXT),0);
+            snprintf(text,sizeof(text),"%d/%d",s.homeFeed+1,KnobHomeFeeds::COUNT);
+            lv_label_set_text(feedStatus,text);seq=homeData.sequence;second=millis()/1000;
         }
         break;
     }
@@ -530,7 +565,7 @@ void drawRing(const State& s, bool flash, bool clapFlash = false, bool timerFlas
     else if (s.screen == Screen::Status) set(s.selected * LED_COUNT / APP_COUNT, s.notice == Notice::Demo ? 0xFF5040 : 0x55D98B);
     else if (s.screen == Screen::Boot) set(0, 0xFFB850);
     else if (s.screen == Screen::Stopped || s.screen == Screen::Fault) set(0, 0xFF3020);
-    if (s.screen == Screen::Sensors || s.screen == Screen::Radar) drawHomeGlow(s, flash);
+    if (s.screen == Screen::Sensors || s.screen == Screen::Radar || s.screen == Screen::HomeFeeds) drawHomeGlow(s, flash);
     // Fault/stop indication takes precedence. A clap never changes app/motor state.
     if (clapFlash && s.screen != Screen::Fault && s.screen != Screen::Stopped)
         for (int i = 0; i < LED_COUNT; ++i) set(i, 0xFFFFFF);
@@ -556,6 +591,7 @@ void task(void*) {
     ledcSetup(0, 5000, 10); ledcAttachPin(9, 0); ledcWrite(0, 818);
     KnobLight::begin(); // Startup runs before motor activation.
     KnobRadar::begin();
+    KnobHomeFeeds::begin();
     KnobBackground::begin();
     xQueueSend(resultQueue, &ok, 0);
     KnobBackground::Environment environment; KnobBackground::Audio audio;
@@ -567,6 +603,8 @@ void task(void*) {
         uint32_t now = millis();
         KnobRadar::active(s.screen == Screen::Radar);
         KnobRadar::read(radarData);
+        KnobHomeFeeds::select(s.screen==Screen::HomeFeeds,s.homeFeed);
+        KnobHomeFeeds::read(homeData);
         const bool oldLightOnline=lightData.online;
         KnobLight::read(lightData);
         KnobBackground::read(environment, audio);
