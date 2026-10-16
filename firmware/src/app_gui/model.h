@@ -3,16 +3,17 @@
 #pragma once
 #include <stdint.h>
 #include "background.h"
+#include "home_feeds.h"
 
 namespace KnobApp {
-constexpr int APP_COUNT = 8;
-constexpr int SENSOR_APP = 5, RADAR_APP = 6, MORE_APP = 7;
+constexpr int APP_COUNT = 9;
+constexpr int SENSOR_APP = 5, RADAR_APP = 6, MORE_APP = 7, HOME_FEEDS_APP = 8;
 constexpr int LED_COUNT = 36;
 constexpr int LED_BOTTOM = 0;
 constexpr int LED_CCW_STEP = 1;
 constexpr int RAW_TO_CCW = 1;
 constexpr int PRESS_THRESHOLD = 15000;
-enum class Screen : uint8_t { Boot, Home, Value, Menu, Status, Standby, Stopped, Fault, Sensors, Radar, Timer, Light };
+enum class Screen : uint8_t { Boot, Home, Value, Menu, Status, Standby, Stopped, Fault, Sensors, Radar, Timer, Light, HomeFeeds };
 enum class Notice : uint8_t { Applied, Info, Demo };
 struct App {
     const char* name;
@@ -29,7 +30,8 @@ static constexpr App APPS[APP_COUNT] = {
     {"System", "DISPLAY", "%", 0xC000FF, 10, 100, 1, 80, 1},
     {"Sensors", "LIVE READINGS", "", 0x00FFD0, 0, 0, 0, 0, 1},
     {"Radar", "AIRCRAFT", "", 0xFF8000, 0, 0, 0, 0, 1},
-    {"More", "OPTIONS", "", 0xFFFFFF, 0, 0, 0, 0, 1}
+    {"More", "OPTIONS", "", 0xFFFFFF, 0, 0, 0, 0, 1},
+    {"Home Sensors", "BOXTEC", "", 0xFF4080, 0, 0, 0, 0, 1}
 };
 inline int wrap(int v, int n) { int r = v % n; return r < 0 ? r + n : r; }
 inline int ledIndex(int offset) { return wrap(LED_BOTTOM + LED_CCW_STEP * offset, LED_COUNT); }
@@ -38,6 +40,7 @@ struct State {
     Notice notice = Notice::Applied;
     int selected = 0, menu = 0, draft = 15;
     int radarRange = 3, radarAircraft = 0;
+    int homeFeed = 0;
     bool radarDetails = false;
     int values[5] = {15, 75, 60, 220, 80};
     uint32_t revision = 0, activityAt = 0, noticeAt = 0;
@@ -63,7 +66,7 @@ public:
     void touch(uint32_t now) { state.activityAt = now; ++state.revision; }
     bool interactive() const {
         return state.screen == Screen::Home || state.screen == Screen::Value ||
-               state.screen == Screen::Menu || state.screen == Screen::Status || state.screen == Screen::Sensors || state.screen == Screen::Radar || state.screen == Screen::Timer || state.screen == Screen::Light;
+               state.screen == Screen::Menu || state.screen == Screen::Status || state.screen == Screen::Sensors || state.screen == Screen::Radar || state.screen == Screen::Timer || state.screen == Screen::Light || state.screen == Screen::HomeFeeds;
     }
     int brightness() const {
         if (state.screen == Screen::Standby) return 10;
@@ -90,6 +93,7 @@ public:
             }
             touch(now); return;
         }
+        if (state.screen == Screen::HomeFeeds) { state.homeFeed=wrap(state.homeFeed+dir,KnobHomeFeeds::COUNT);touch(now);return; }
         if (state.screen == Screen::Radar) {
             if (state.radarDetails) state.radarAircraft += dir;
             else state.radarRange = wrap(state.radarRange + dir, 4);
@@ -112,10 +116,12 @@ public:
         if (state.screen == Screen::Home) {
             if (state.selected == 0 && (state.timerRemaining || state.timerDone)) state.screen = Screen::Timer;
             else if (state.selected == RADAR_APP) { state.screen = Screen::Radar; state.radarDetails = false; state.radarAircraft = 0; }
+            else if (state.selected == HOME_FEEDS_APP) state.screen = Screen::HomeFeeds;
             else if (state.selected == 2) state.screen = Screen::Light;
             else if (state.selected == SENSOR_APP) state.screen = Screen::Sensors;
             else if (state.selected == MORE_APP) { state.menu = 0; state.screen = Screen::Menu; }
             else { state.draft = state.values[state.selected]; state.screen = Screen::Value; }
+        } else if (state.screen == Screen::HomeFeeds) { state.screen=Screen::Home;
         } else if (state.screen == Screen::Light) { touch(now); return;
         } else if (state.screen == Screen::Timer) {
             updateTimer(now);
@@ -142,7 +148,7 @@ public:
     }
     void longPress(uint32_t now) {
         if (state.screen == Screen::Home) state.screen = Screen::Standby;
-        else if (state.screen == Screen::Value || state.screen == Screen::Menu || state.screen == Screen::Radar || state.screen == Screen::Timer || state.screen == Screen::Light) state.screen = Screen::Home;
+        else if (state.screen == Screen::Value || state.screen == Screen::Menu || state.screen == Screen::Radar || state.screen == Screen::Timer || state.screen == Screen::Light || state.screen == Screen::HomeFeeds) state.screen = Screen::Home;
         else if (state.screen == Screen::Status) state.screen = returnTo;
         else if (state.screen == Screen::Standby || state.screen == Screen::Sensors) state.screen = Screen::Home;
         else return;
