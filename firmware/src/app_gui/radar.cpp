@@ -92,7 +92,7 @@ void begin(){
         prefs.end();
     }
     // Called by GUI startup before the motor is initialized/enabled.
-    if(configured){WiFi.persistent(false);WiFi.mode(WIFI_STA);WiFi.setAutoReconnect(false);WiFi.begin(config.ssid,config.password);}
+    if(configured){WiFi.persistent(false);WiFi.mode(WIFI_AP_STA);WiFi.setAutoReconnect(false);WiFi.begin(config.ssid,config.password);}
     if(xTaskCreatePinnedToCore(task,"plane_data",12288,nullptr,1,nullptr,0)!=pdPASS)publish("Network task failed");
 }
 void active(bool value){enabled.store(value);}

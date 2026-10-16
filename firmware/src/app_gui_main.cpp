@@ -13,6 +13,7 @@
 #include "app_gui/pressure.h"
 #include "app_gui/view.h"
 #include "app_gui/settings_store.h"
+#include "app_gui/light_link.h"
 
 constexpr float TAU_F = 6.28318530718f, PI_F = TAU_F / 2, DEG_TO_RAD_F = PI_F / 180;
 constexpr uint8_t MOTOR_PINS[] = {4, 7, 5, 16, 6, 15};
@@ -121,6 +122,8 @@ float detentError() {
         if (!app.canTurn(direction)) break; // Bounded value: elastic end stop.
         const auto before = app.state.screen;
         activeCentre = positiveAngle(activeCentre + rawStep * width);
+        if (before == KnobApp::Screen::Light)
+            KnobLight::request(direction > 0 ? KnobLight::Action::Brighter : KnobLight::Action::Dimmer);
         app.turn(direction, millis());
         changedView(before);
         if (before != app.state.screen) return 0;
@@ -226,7 +229,10 @@ void handleGesture(KnobPressure::Event event) {
         }
     } else if (consumeGesture) {
         if (event == E::Short) consumeGesture = false;
-    } else if (event == E::Short) app.shortPress(millis());
+    } else if (event == E::Short) {
+        if (before == KnobApp::Screen::Light) KnobLight::request(KnobLight::Action::Toggle);
+        app.shortPress(millis());
+    }
     else if (event == E::Long) app.longPress(millis());
     changedView(before);
 }

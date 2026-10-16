@@ -11,6 +11,7 @@
 #include <string.h>
 #include "view.h"
 #include "radar.h"
+#include "light_link.h"
 #include "knob_fonts.h"
 
 #if !CONFIG_IDF_TARGET_ESP32S3 || ARDUINO_RUNNING_CORE != 1
@@ -34,10 +35,12 @@ QueueHandle_t states = nullptr, resultQueue = nullptr;
 lv_color_t pixels[240 * 20];
 lv_disp_draw_buf_t drawBuffer;
 lv_disp_drv_t displayDriver;
-lv_obj_t *views[11], *cards[APP_COUNT], *homeTitle, *homeValue;
+lv_obj_t *views[12], *cards[APP_COUNT], *homeTitle, *homeValue;
 lv_obj_t *valueTitle, *valueText, *valueUnit, *valueIcon, *valueDots[36];
 lv_obj_t *menuFocus, *menuRows[4], *noticeTitle, *noticeText, *noticeIcon;
 lv_obj_t *sensorTemperature, *sensorHumidity, *sensorPressure, *sensorStatus, *audioStatus;
+KnobLight::Snapshot lightData;
+lv_obj_t *lightAction, *lightStatus;
 lv_obj_t *timerArc, *timerText, *timerStatus, *settingsError;
 lv_obj_t *bootText, *stopTitle, *stopReason, *faultReason;
 enum Icon { KNOB_ICON_TIMER, KNOB_ICON_MUSIC, KNOB_ICON_SUN, KNOB_ICON_THERMO,
@@ -212,7 +215,7 @@ void createViews() {
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    for (int i = 0; i < 11; ++i) {
+    for (int i = 0; i < 12; ++i) {
         views[i] = box(root, 240, 240);
         lv_obj_add_flag(views[i], LV_OBJ_FLAG_HIDDEN);
     }
@@ -242,6 +245,10 @@ void createViews() {
     radarDetails = label(v,"",&knob_font_18,65,UI_TEXT,210);
     radarStatus = label(v,"Starting network",&knob_font_14,191,UI_MUTED,208);
     label(v,"adsb.fi",&knob_font_14,213,UI_MUTED,120);
+    v = views[viewIndex(Screen::Light)];
+    label(v,"LIGHT",&knob_font_16,35,APPS[2].colour);
+    lightAction=label(v,"Ready",&knob_font_24,100,UI_TEXT,210);
+    lightStatus=label(v,"IR bridge offline",&knob_font_14,158,UI_MUTED,210);
     v = views[viewIndex(Screen::Timer)];
     timerArc=lv_arc_create(v);lv_obj_set_size(timerArc,210,210);lv_obj_center(timerArc);
     lv_obj_remove_style(timerArc,nullptr,LV_PART_KNOB);lv_obj_clear_flag(timerArc,LV_OBJ_FLAG_CLICKABLE);
@@ -341,7 +348,7 @@ void home(const State& s, bool textChanged = true) {
     char n[16], text[40];
     if (s.selected == 0 && s.timerDone) snprintf(text,sizeof(text),"Finished");
     else if (s.selected == 0 && s.timerRemaining) timerTextFormat(text,sizeof(text),s.timerRemaining);
-    else if (s.selected == MORE_APP) snprintf(text, sizeof(text), "%s", "");
+    else if (s.selected == MORE_APP || s.selected == 2) snprintf(text, sizeof(text), "%s", "");
     else if (s.selected == SENSOR_APP || s.selected == RADAR_APP) snprintf(text, sizeof(text), "%s", "");
     else {
         numberText(n, sizeof(n), s.values[s.selected], APPS[s.selected]);
@@ -374,6 +381,26 @@ void render(const State& s, const State& old, bool first) {
             char text[20];timerTextFormat(text,sizeof(text),s.timerRemaining);lv_label_set_text(timerText,text);
             lv_label_set_text(timerStatus,s.timerDone?"Finished":s.timerRunning?"Running":"Paused");
             lv_arc_set_value(timerArc,s.timerTotal?uint64_t(s.timerRemaining)*1000/s.timerTotal:0);
+        }
+        break;
+    }
+    case Screen::Light: {
+        static uint32_t lastSent=~0U,lastDropped=~0U,lastPending=~0U;
+        static bool lastOnline=false,lastReady=false;
+        if(changed || lastSent!=lightData.sent || lastDropped!=lightData.dropped ||
+           lastPending!=lightData.pending || lastOnline!=lightData.online || lastReady!=lightData.ready){
+            const char* action="Ready";
+            if(lightData.lastSent==KnobLight::Command::On)action="ON sent";
+            else if(lightData.lastSent==KnobLight::Command::Off)action="OFF sent";
+            else if(lightData.lastSent==KnobLight::Command::Brighter)action="Brighter";
+            else if(lightData.lastSent==KnobLight::Command::Dimmer)action="Dimmer";
+            if(!lightData.online)action="Offline";
+            else if(lightData.pending)action="Sending";
+            else if(lastDropped!=~0U && lastDropped!=lightData.dropped)action="Not sent";
+            lv_label_set_text(lightAction,action);
+            lv_label_set_text(lightStatus,!lightData.ready?"IR link unavailable":!lightData.online?"IR bridge offline":"IR link / no lamp feedback");
+            lastSent=lightData.sent;lastDropped=lightData.dropped;lastPending=lightData.pending;
+            lastOnline=lightData.online;lastReady=lightData.ready;
         }
         break;
     }
@@ -482,18 +509,15 @@ void drawRing(const State& s, bool flash, bool clapFlash = false, bool timerFlas
     uint32_t tint = APPS[s.selected].colour;
     auto set = [&](int offset, uint32_t rgb) { ring.setPixelColor(ledIndex(offset), rgb); };
     if (s.screen == Screen::Home) drawHomeGlow(s, flash);
-        else if (s.screen == Screen::Timer) {
-            const float filled = s.timerTotal
-                ? float(s.timerRemaining) * LED_COUNT / s.timerTotal
-                : 0;
-
-        // Start at 12 o'clock and fill clockwise, matching the display.
-        // As time decreases, the endpoint retreats counterclockwise.
-        for (int i = 0; i < LED_COUNT; ++i) {
-            const int offset = LED_COUNT / 2 - i;
-            const float intensity = fmaxf(0, fminf(1, filled - i));
-            set(offset, ledBlend(0, APPS[0].colour, intensity));
-        }
+    else if (s.screen == Screen::Timer) {
+        float filled=s.timerTotal?float(s.timerRemaining)*LED_COUNT/s.timerTotal:0;
+        // LED0 is at six o'clock; match the display start at twelve.
+        for(int i=0;i<LED_COUNT;++i)set(LED_COUNT/2-i,ledBlend(0,APPS[0].colour,fmaxf(0,fminf(1,filled-i))));
+    }
+    else if (s.screen == Screen::Light) {
+        // Link/activity indication, deliberately not a lamp brightness gauge.
+        float level=lightData.online?0.12f:0.025f;
+        for(int i=0;i<LED_COUNT;++i)set(i,ledBlend(0,tint,flash?0.5f:level));
     }
     else if (s.screen == Screen::Value) {
         const App& a = APPS[s.selected];
@@ -530,6 +554,7 @@ void task(void*) {
     createViews();
     State s, old; render(s, old, true); drawRing(s, false); lv_refr_now(nullptr);
     ledcSetup(0, 5000, 10); ledcAttachPin(9, 0); ledcWrite(0, 818);
+    KnobLight::begin(); // Startup runs before motor activation.
     KnobRadar::begin();
     KnobBackground::begin();
     xQueueSend(resultQueue, &ok, 0);
@@ -542,6 +567,8 @@ void task(void*) {
         uint32_t now = millis();
         KnobRadar::active(s.screen == Screen::Radar);
         KnobRadar::read(radarData);
+        const bool oldLightOnline=lightData.online;
+        KnobLight::read(lightData);
         KnobBackground::read(environment, audio);
         s.environment = environment; s.audio = audio;
         if (s.environment.valid && now - s.environment.measuredAt > 6000) {
@@ -550,13 +577,15 @@ void task(void*) {
         if (audio.pairs != pairsSeen) {
             pairsSeen = audio.pairs; clapAt = now;
             clapActive = now - audio.lastPairAt < 500;
+            if(clapActive && s.screen!=Screen::Fault && s.screen!=Screen::Stopped && s.screen!=Screen::Boot)
+                KnobLight::request(KnobLight::Action::Toggle);
         }
         bool clapFlash = clapActive && now - clapAt < 200;
         if (!clapFlash) clapActive = false;
         if (s.clicks != clickCount) { clickCount = s.clicks; flashAt = now; flashing = true; }
         bool timerFlash = s.timerDone && now-s.timerDoneAt < 10000 && ((now-s.timerDoneAt)/500)%2==0;
         bool flash = flashing && now - flashAt < 150; if (!flash) flashing = false;
-        if (first || s.screen != old.screen || s.selected != old.selected || s.menu != old.menu ||
+        if (first || oldLightOnline!=lightData.online || s.screen != old.screen || s.selected != old.selected || s.menu != old.menu ||
             s.draft != old.draft || s.notice != old.notice || flash != lastFlash || clapFlash != lastClapFlash ||
             timerFlash != lastTimerFlash || (s.screen == Screen::Timer && s.timerRemaining/1000 != old.timerRemaining/1000) ||
             (s.screen == Screen::Home && fabsf(s.homeOffset - old.homeOffset) > 0.0001f)) drawRing(s, flash, clapFlash, timerFlash);

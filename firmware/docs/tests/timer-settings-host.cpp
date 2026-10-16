@@ -25,6 +25,7 @@ int main(){
  r=KnobSettings::capture(m.state);r.values[3]=221;r.checksum=KnobSettings::checksum(r);assert(!KnobSettings::valid(r));
  // Every editable app must persist a turned value without a confirming press.
  for(int app=0;app<5;++app){
+     if(app==2)continue; // IR brightness is not an absolute saved percentage.
      Model edit;edit.activate(0);edit.state.selected=app;edit.shortPress(1);
      int expected=edit.state.values[app]+APPS[app].step;edit.turn(1,2);
      assert(edit.state.values[app]==expected);
