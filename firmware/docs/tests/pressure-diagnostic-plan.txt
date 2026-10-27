@@ -1,0 +1,58 @@
+SmartKnob Druckdiagnose v2
+
+Inhalt in den Repository-Hauptordner kopieren. Den Ordner firmware zusammenfuehren,
+nicht ersetzen. Die bestehende src/hx711_press.cpp wird ersetzt, die GUI bleibt
+unveraendert. platformio.ini muss nicht angepasst werden: hx711_press existiert.
+
+Im firmware-Terminal:
+pio run -e hx711_press -t upload
+pio device monitor -e hx711_press -b 115200
+
+Motor und Display bleiben aus. LED-Ring wird bei DOWN weiss und bei RELEASE aus.
+Standard: Druck 20000, Loslassen 10000, Filter 4 Samples, positive Druckrichtung.
+Die Werte sind ADC-Zaehlschritte relativ zum Nullpunkt, keine Gramm/Newton.
+
+Befehle (direkt, ohne Enter):
+t   Nullpunkt neu erfassen; voll zusammengebaut, unberuehrt und still halten
++/- Druckschwelle um 1000 erhoehen/senken
+]/[ Loslassschwelle um 1000 erhoehen/senken
+r   Rohsignal fuer Loslassen (Standard, wie bisherige App)
+f   gefiltertes Signal fuer Loslassen
+4/8 Filterlaenge
+p   Druckrichtung umkehren, nur falls Druecken negative Delta-Werte erzeugt
+m   Zeitmarkierung fuer Beginn einer Testphase
+c   Ereigniszaehler und Delta-Bereich zuruecksetzen
+i   Hilfe und Einstellungen
+x   Erkennung stoppen; t startet mit neuer Nullung
+
+Alle Einstellungen nur im RAM; kein Flash/NVS-Schreiben. Nach Aenderungen
+loslassen, bis ARMED erscheint. Druckschwelle bleibt immer ueber Loslassschwelle.
+Tare: 32 Samples, maximal 6 Sekunden, erlaubte Spannweite 5000 Counts.
+Kein automatisches Nachfuehren des Nullpunkts. Bei ADC-Limit/Timeout neue Nullung
+nach Behebung erforderlich. Ein Nullpunkt von z.B. 300000 ist kein Druckereignis.
+
+Erster Test mit unveraenderten Startwerten:
+1. t, dann ZERO SET und ARMED abwarten.
+2. m, 10 Sekunden nichts beruehren.
+3. m, 10 einzelne kurze Drucke, jeweils voll loslassen (ca. 1 Sekunde Pause).
+4. m, 3 lange Drucke, jeweils ca. 2 Sekunden halten und voll loslassen.
+5. m, 10 Sekunden nur drehen, nicht druecken.
+6. x. Gesamtes Protokoll senden und notieren, ob die LEDs zu den Drucken passten.
+
+Erwartung bei sauberem Test: 13 DOWN, 10 SHORT, 3 LONG, 13 RELEASE.
+Erst danach Vergleich mit f; kein neues t, gleiche Testfolge, c setzt Zaehler zurueck.
+Falls die Ruheposition nach Loslassen ausserhalb +/-10000 bleibt, wird WAIT RELEASE
+oder HELD angezeigt. Das ist bewusst sichtbar und wird nicht automatisch genullt.
+
+Unterschiede zur GUI: kein Motor, kein Druck-Klickimpuls, kein Dreh-Veto,
+keine App-Wechsel. Dieser Test isoliert die Druckauswertung. Er beweist noch
+keine Zuverlaessigkeit unter Motorlast. Auch f + Filter8 ist nicht exakt der alte
+Test: hier wird nur positive Druckrichtung erkannt und SHORT/LONG getrennt.
+
+Rueckkehr zur GUI (Monitor mit Ctrl+C schliessen):
+pio run -e app_gui -t upload
+
+Pruefung am Rechner: Ereignislogik getestet (Kurz/Lang, Wiederfreigabe,
+negative Ausschlaege, kurze Stoerimpulse, Zeitzaehler-Ueberlauf). Gesamte
+Testdatei gegen einfache Hardware-Stubs auf C++-Syntax geprueft.
+ESP32-Build und reale Hardwarepruefung noch offen.

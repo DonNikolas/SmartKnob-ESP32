@@ -1,279 +1,122 @@
-// Generated with ChatGPT assistance based on my project requirements.
-// Experimental pressure-button test. No force calibration.
-
+// SmartKnob pressure diagnostic v2. Created with ChatGPT assistance.
+// MOTOR OFF. No movement veto, motor pulse, GUI or persistent setting changes.
 #include <Arduino.h>
 #include <HX711.h>
 #include <Adafruit_NeoPixel.h>
-#include <stdint.h>
-#include <stdlib.h>
-
-constexpr uint8_t HX_DOUT = 12;
-constexpr uint8_t HX_SCK = 13;
-constexpr uint8_t MOTOR_PINS[] = {4, 7, 5, 16, 6, 15};
-constexpr uint8_t BACKLIGHT_PIN = 9;
-
-constexpr uint8_t LED_PIN = 11;
-constexpr uint16_t LED_COUNT = 36;
-
-constexpr uint16_t ZERO_SAMPLES = 32;
-constexpr unsigned FILTER_SIZE = 8;
-constexpr uint32_t PRESS_CONFIRM_MS = 50;
-constexpr uint32_t RELEASE_CONFIRM_MS = 150;
-
+#include "pressure_diagnostic_logic.h"
+using namespace PressureDiagnostic;
 HX711 adc;
-Adafruit_NeoPixel ring(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
-
-long threshold = 20000;
-constexpr long THRESHOLD_STEP = 1000;
-
-bool lightOn = false;
-bool zeroValid = false;
-bool collectingZero = false;
-bool armed = false;
-bool pressTiming = false;
-bool releaseTiming = false;
-
-long zeroOffset = 0;
-int64_t zeroSum = 0;
-uint16_t zeroCount = 0;
-
-long filterValues[FILTER_SIZE] = {};
-int64_t filterSum = 0;
-unsigned filterIndex = 0;
-unsigned filterCount = 0;
-
-uint32_t pressStarted = 0;
-uint32_t releaseStarted = 0;
-uint32_t zeroStarted = 0;
-uint32_t lastData = 0;
-uint32_t lastWarning = 0;
-uint32_t lastReport = 0;
-uint32_t toggleCount = 0;
-
-void resetDetection() {
-    armed = false;
-    pressTiming = false;
-    releaseTiming = false;
+Adafruit_NeoPixel ring(36,11,NEO_GRB+NEO_KHZ800);
+Button button;
+constexpr uint8_t motorPins[]={4,7,5,16,6,15};
+long values[8]={},offset=0,raw=0,delta=0,filtered=0;
+long zeroLow=0,zeroHigh=0,minimum=0,maximum=0;
+int64_t sum=0,zeroSum=0;
+unsigned window=4,filterIndex=0,count=0,zeroCount=0,direction=1;
+uint32_t lastData=0,reportAt=0,zeroAt=0,downs=0,shorts=0,longs=0,releases=0,samples=0;
+uint32_t maxGap=0;
+bool valid=false,zeroing=false,stopped=false,rawRelease=true;
+const char* fault="NOT TARED";
+void colour(uint32_t c) { ring.fill(c); ring.show(); }
+void resetFilter() { sum=0;filterIndex=count=0; for(auto &v:values)v=0; }
+void resetDetection() { button.reset(); resetFilter(); colour(0); }
+void fail(const char* why) {
+    if(valid || zeroing || fault!=why) Serial.printf("FAULT: %s | send t after checking\n",why);
+    fault=why;valid=false;zeroing=false;resetDetection();
 }
-
-void resetFilter() {
-    filterSum = 0;
-    filterIndex = 0;
-    filterCount = 0;
-    for (unsigned i = 0; i < FILTER_SIZE; i++) {
-        filterValues[i] = 0;
+void settings() {
+    Serial.printf("SETTINGS | Press: %ld | Release: %ld | Filter: %u | Release source: %s | Direction: %s\n",
+      button.press,button.release,window,rawRelease?"RAW":"FILTERED",direction==1?"POSITIVE":"NEGATIVE");
+}
+void help() {
+    Serial.println("\n=== PRESSURE DIAGNOSTIC v2 - MOTOR OFF ===");
+    Serial.println("t tare untouched assembly (32 samples); x stop detection; i help/settings");
+    Serial.println("+/- press threshold +/-1000; ]/[ release threshold +/-1000");
+    Serial.println("4/8 filter samples; r raw release; f filtered release; p reverse pressure polarity");
+    Serial.println("m mark test phase; c clear counters/range. Settings are RAM-only.");
+    Serial.println("DOWN = LED white immediately; RELEASE = LED off; SHORT/LONG are separate events.");
+    Serial.println("Hold 900ms => LONG once. Release confirmation 60ms; press confirmation 50ms.");
+    Serial.println("No automatic tare, no baseline tracking, no rotation rejection in this test.");
+    settings();
+}
+void command(char c) {
+    bool change=false;
+    switch(c) {
+    case 't':
+      stopped=false;valid=false;zeroing=true;zeroSum=zeroCount=0;zeroAt=millis();
+      delta=filtered=0;resetDetection(); Serial.println("ZERO: do not touch or turn the assembled knob."); break;
+    case 'x': stopped=true;zeroing=false;resetDetection();Serial.println("STOPPED: t to restart/tare.");break;
+    case '+': if(button.press<1000000){button.press+=1000;change=true;}break;
+    case '-': if(button.press>button.release+1000){button.press-=1000;change=true;}break;
+    case ']': if(button.release+1000<button.press){button.release+=1000;change=true;}break;
+    case '[': if(button.release>1000){button.release-=1000;change=true;}break;
+    case '4': window=4;change=true;break;
+    case '8': window=8;change=true;break;
+    case 'r': rawRelease=true;change=true;break;
+    case 'f': rawRelease=false;change=true;break;
+    case 'p': direction=direction==1?0:1;change=true;break;
+    case 'c': downs=shorts=longs=releases=0;minimum=maximum=0;Serial.println("COUNTERS CLEARED");break;
+    case 'm': Serial.printf("MARK | Time: %lu ms\n",(unsigned long)millis());break;
+    case 'i': help();break;
+    default: break;
     }
+    if(change){resetDetection();Serial.println("CONFIG CHANGED: release knob to rearm.");settings();}
 }
-
-void showLight() {
-    const uint32_t colour = lightOn
-        ? ring.Color(255, 180, 90)
-        : ring.Color(0, 0, 0);
-
-    for (uint16_t i = 0; i < LED_COUNT; i++) {
-        ring.setPixelColor(i, colour);
-    }
-    ring.show();
-}
-
-void startZero() {
-    collectingZero = true;
-    zeroValid = false;
-    zeroSum = 0;
-    zeroCount = 0;
-    zeroStarted = millis();
-    resetDetection();
-    resetFilter();
-    Serial.println("ZERO: Keep the PCB unloaded and still.");
-}
-
-void updateButton(long magnitude, uint32_t now) {
-    // A lower release threshold provides hysteresis.
-    const long releaseThreshold = threshold / 2;
-
-    if (!armed) {
-        if (magnitude < releaseThreshold) {
-            if (!releaseTiming) {
-                releaseTiming = true;
-                releaseStarted = now;
-            }
-
-            if (now - releaseStarted >= RELEASE_CONFIRM_MS) {
-                armed = true;
-                releaseTiming = false;
-                Serial.println("ARMED: Ready for next press.");
-            }
-        } else {
-            releaseTiming = false;
-        }
-        return;
-    }
-
-    if (magnitude >= threshold) {
-        if (!pressTiming) {
-            pressTiming = true;
-            pressStarted = now;
-        }
-
-        if (now - pressStarted >= PRESS_CONFIRM_MS) {
-            lightOn = !lightOn;
-            toggleCount++;
-            showLight();
-
-            Serial.printf(
-                "PRESS | Magnitude: %ld | Threshold: %ld"
-                " | Light: %s | Count: %lu\n",
-                magnitude, threshold, lightOn ? "ON" : "OFF",
-                static_cast<unsigned long>(toggleCount)
-            );
-
-            resetDetection();
-        }
-    } else {
-        pressTiming = false;
-    }
-}
-
 void setup() {
-    for (uint8_t pin : MOTOR_PINS) {
-        pinMode(pin, OUTPUT);
-        digitalWrite(pin, LOW);
-    }
-    pinMode(BACKLIGHT_PIN, OUTPUT);
-    digitalWrite(BACKLIGHT_PIN, LOW);
-
-    Serial.begin(115200);
-    delay(3000);
-
-    ring.begin();
-    ring.setBrightness(12);
-    showLight();
-
-    Serial.println("\n=== SmartKnob pressure-button test v1 ===");
-    Serial.println("DOUT: 12 | SCK: 13 | LEDs: 36 on GPIO 11");
-    Serial.println("Channel A, gain 128. Values are ADC counts.");
-    Serial.println("+ raises threshold, - lowers threshold.");
-    Serial.println("t captures a new unloaded zero point.");
-    Serial.println("Threshold changes are not saved after reset.");
-    Serial.println("Send t when the PCB is unloaded.");
-
-    adc.begin(HX_DOUT, HX_SCK, 128);
-    adc.power_down();
-    delay(1);
-    adc.power_up();
-    delay(500);
-    lastData = millis();
+    for(auto pin:motorPins){pinMode(pin,OUTPUT);digitalWrite(pin,LOW);}
+    pinMode(9,OUTPUT);digitalWrite(9,LOW);
+    Serial.begin(115200);delay(2500);ring.begin();ring.setBrightness(12);colour(0);
+    adc.begin(12,13,128);adc.power_down();delay(1);adc.power_up();delay(500);
+    lastData=millis();help();
 }
-
 void loop() {
-    while (Serial.available()) {
-        const char command = Serial.read();
-
-        if (command == 't' || command == 'T') {
-            startZero();
-        } else if (command == '+' || command == '-') {
-            threshold += command == '+'
-                ? THRESHOLD_STEP : -THRESHOLD_STEP;
-
-            if (threshold < 1000) threshold = 1000;
-            if (threshold > 1000000) threshold = 1000000;
-
-            // Require release after changing the threshold.
-            resetDetection();
-            Serial.printf(
-                "Threshold: %ld | Release below: %ld\n",
-                threshold, threshold / 2
-            );
+    // Bound command handling so serial input cannot starve sampling.
+    for(unsigned n=0;n<16 && Serial.available();++n)command(Serial.read());
+    uint32_t now=millis();
+    if(zeroing && now-zeroAt>6000)fail("TARE TIMEOUT");
+    if(adc.is_ready()) {
+      raw=adc.read();now=millis();
+      uint32_t gap=now-lastData;if(gap>maxGap)maxGap=gap;
+      lastData=now;++samples;
+      if(raw<=-8388608L || raw>=8388607L)fail("ADC SATURATED");
+      else if(zeroing) {
+        if(!zeroCount)zeroLow=zeroHigh=raw;
+        if(raw<zeroLow)zeroLow=raw;
+        if(raw>zeroHigh)zeroHigh=raw;
+        zeroSum+=raw;++zeroCount;
+        if(zeroCount==32) {
+          if(zeroHigh-zeroLow>5000)fail("TARE UNSTABLE (span >5000)");
+          else {offset=long(zeroSum/32);valid=true;zeroing=false;fault="OK";
+            minimum=maximum=0;resetDetection();
+            Serial.printf("ZERO SET | Offset: %ld | Span: %ld\n",offset,zeroHigh-zeroLow);}
         }
-    }
-
-    const uint32_t now = millis();
-
-    if (collectingZero && now - zeroStarted > 6000) {
-        collectingZero = false;
-        Serial.println("ZERO FAILED: Not enough data. Send t to retry.");
-    }
-
-    if (!adc.is_ready()) {
-        if (now - lastData >= 2000 &&
-            now - lastWarning >= 2000) {
-            Serial.println("TIMEOUT: No ready data. Check ADC, then send t.");
-            lastWarning = now;
-            zeroValid = false;
-            collectingZero = false;
-            resetDetection();
-            resetFilter();
+      } else if(valid && !stopped) {
+        delta=(raw-offset)*(direction==1?1:-1);
+        if(delta<minimum)minimum=delta;
+        if(delta>maximum)maximum=delta;
+        sum-=values[filterIndex];values[filterIndex]=delta;sum+=delta;filterIndex=(filterIndex+1)%window;
+        if(count<window)++count;
+        filtered=long(sum/count);
+        if(count==window) {
+          const unsigned ev=button.sample(filtered,delta,rawRelease?delta:filtered,now);
+          if(ev & ARMED)Serial.printf("ARMED | Time: %lu\n",(unsigned long)now);
+          if(ev & DOWN){++downs;colour(ring.Color(255,255,255));}
+          if(ev & RELEASE){++releases;colour(0);}
+          if(ev & SHORT)++shorts;
+          if(ev & LONG)++longs;
+          if(ev & (DOWN|RELEASE|SHORT|LONG))Serial.printf(
+            "EVENT | Time: %lu | %s%s%s%s | Raw delta: %ld | Filtered delta: %ld | Held ms: %lu\n",
+            (unsigned long)now,ev&DOWN?"DOWN ":"",ev&RELEASE?"RELEASE ":"",
+            ev&SHORT?"SHORT ":"",ev&LONG?"LONG ":"",delta,filtered,(unsigned long)(now-button.downAt));
         }
-        delay(1);
-        return;
+      }
+    } else if(now-lastData>=2000)fail("ADC TIMEOUT");
+    if(now-reportAt>=250) {
+      Serial.printf("Time: %lu | Raw: %ld | Delta: %ld | Filtered: %ld | State: %s | P/R: %ld/%ld | D/S/L/R: %lu/%lu/%lu/%lu | Range: %ld..%ld | Samples: %lu | MaxGap: %lu ms\n",
+        (unsigned long)now,raw,delta,filtered,stopped?"STOPPED":zeroing?"TARING":!valid?fault:count<window?"FILTER WARMUP":button.held?"HELD":button.armed?"ARMED":"WAIT RELEASE",
+        button.press,button.release,(unsigned long)downs,(unsigned long)shorts,(unsigned long)longs,(unsigned long)releases,
+        minimum,maximum,(unsigned long)samples,(unsigned long)maxGap);
+      samples=0;maxGap=0;reportAt=now;
     }
-
-    const long raw = adc.read();
-    lastData = millis();
-
-    if (raw <= -8388608L || raw >= 8388607L) {
-        zeroValid = false;
-        collectingZero = false;
-        resetDetection();
-        resetFilter();
-
-        if (millis() - lastWarning >= 1000) {
-            Serial.println("ADC LIMIT: Switching disabled. Check bridge.");
-            lastWarning = millis();
-        }
-        delay(1);
-        return;
-    }
-
-    if (collectingZero) {
-        zeroSum += raw;
-        zeroCount++;
-
-        if (zeroCount >= ZERO_SAMPLES) {
-            zeroOffset = static_cast<long>(zeroSum / zeroCount);
-            zeroValid = true;
-            collectingZero = false;
-            resetFilter();
-            Serial.printf("ZERO SET: %ld counts\n", zeroOffset);
-        }
-        delay(1);
-        return;
-    }
-
-    filterSum -= filterValues[filterIndex];
-    filterValues[filterIndex] = raw;
-    filterSum += raw;
-    filterIndex = (filterIndex + 1) % FILTER_SIZE;
-
-    if (filterCount < FILTER_SIZE) filterCount++;
-
-    const long filtered = static_cast<long>(filterSum / filterCount);
-    const long delta = zeroValid ? filtered - zeroOffset : 0;
-    const long magnitude = labs(delta);
-
-    if (zeroValid && filterCount == FILTER_SIZE) {
-        updateButton(magnitude, millis());
-    }
-
-    if (millis() - lastReport >= 250) {
-        Serial.printf(
-            "Time: %lu s | Raw: %ld | Filtered: %ld",
-            static_cast<unsigned long>(millis() / 1000),
-            raw, filtered
-        );
-
-        if (zeroValid) {
-            Serial.printf(" | Delta: %ld | Magnitude: %ld", delta, magnitude);
-        } else {
-            Serial.print(" | ZERO NOT SET: Send t");
-        }
-
-        Serial.printf(
-            " | Threshold: %ld | Armed: %s | Light: %s\n",
-            threshold, armed ? "YES" : "NO", lightOn ? "ON" : "OFF"
-        );
-        lastReport = millis();
-    }
-
     delay(1);
 }

@@ -245,7 +245,7 @@ void createViews() {
     sensorHumidity = label(v, "--.- %RH", &knob_font_24, 88);
     sensorPressure = label(v, "----.- hPa", &knob_font_24, 123);
     sensorStatus = label(v, "Starting sensor", &knob_font_14, 161, UI_MUTED);
-    audioStatus = label(v, "Starting microphone", &knob_font_14, 182, UI_MUTED);
+    audioStatus = label(v, "Mic off - pressure test", &knob_font_14, 182, UI_MUTED);
     v = views[viewIndex(Screen::Radar)];
     radarPlot = box(v,240,240);lv_obj_add_event_cb(radarPlot,radarDraw,LV_EVENT_DRAW_MAIN,nullptr);
     radarTitle = label(v,"25 km   N",&knob_font_16,10,APPS[RADAR_APP].colour);
@@ -595,7 +595,7 @@ void task(void*) {
     KnobBackground::begin();
     xQueueSend(resultQueue, &ok, 0);
     KnobBackground::Environment environment; KnobBackground::Audio audio;
-    uint32_t pairsSeen = 0, clapAt = 0; bool clapActive = false, lastClapFlash = false;
+    bool lastClapFlash = false;
     bool first = true, lastFlash = false, flashing = false, lastTimerFlash = false;
     uint32_t previousTick = millis(), clickCount = 0, flashAt = 0;
     for (;;) {
@@ -612,14 +612,9 @@ void task(void*) {
         if (s.environment.valid && now - s.environment.measuredAt > 6000) {
             s.environment.valid = false; s.environment.status = "Sensor data stale";
         }
-        if (audio.pairs != pairsSeen) {
-            pairsSeen = audio.pairs; clapAt = now;
-            clapActive = now - audio.lastPairAt < 500;
-            if(clapActive && s.screen!=Screen::Fault && s.screen!=Screen::Stopped && s.screen!=Screen::Boot)
-                KnobLight::request(KnobLight::Action::Toggle);
-        }
-        bool clapFlash = clapActive && now - clapAt < 200;
-        if (!clapFlash) clapActive = false;
+        // Deliberately disabled for pressure diagnosis: no clap-triggered light
+        // requests and no clap flash, even if stale audio data were supplied.
+        const bool clapFlash = false;
         if (s.clicks != clickCount) { clickCount = s.clicks; flashAt = now; flashing = true; }
         bool timerFlash = s.timerDone && now-s.timerDoneAt < 10000 && ((now-s.timerDoneAt)/500)%2==0;
         bool flash = flashing && now - flashAt < 150; if (!flash) flashing = false;

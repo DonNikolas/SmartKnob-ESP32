@@ -9,8 +9,13 @@
 #include <driver/spi_master.h>
 #include <math.h>
 #include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+#include "app_gui/press_turn_policy.h"
 #include "app_gui/model.h"
 #include "app_gui/pressure.h"
+#include "app_gui/haptics.h"
 #include "app_gui/view.h"
 #include "app_gui/settings_store.h"
 #include "app_gui/light_link.h"
@@ -20,8 +25,7 @@ constexpr uint8_t MOTOR_PINS[] = {4, 7, 5, 16, 6, 15};
 constexpr uint8_t SENSOR_CS = 14, SENSOR_CLK = 21, SENSOR_DATA = 47, DRIVER_DIAG = 17;
 constexpr int PAIRS = 7, SENSOR_SIGN = -1;
 constexpr float SPRING_LIMIT = 1.00f, CLICK_VOLTAGE = 3.00f;
-constexpr float STIFFNESS = 3.00f, SPRING_SLEW = 200.0f;
-constexpr float DEAD_ZONE = DEG_TO_RAD_F;
+constexpr float SPRING_SLEW = 200.0f;
 constexpr uint32_t HOLD_US = 2000, STALE_US = 5000, CLICK_HALF_US = 5000;
 constexpr float ELECTRICAL_ZERO = (22.04286664f + 270) * DEG_TO_RAD_F;
 // Same baseline commutation as the tested combined controls, not a new calibration.
@@ -39,9 +43,79 @@ uint32_t suspensionUs = 0, springOutputUs = 0, startupAt = 0;
 uint32_t crcErrors = 0, trackLost = 0, weakFrames = 0, recoveries = 0;
 uint32_t heldTicks = 0, zeroedTicks = 0, completedClicks = 0, cancelledClicks = 0;
 uint8_t fieldStatus = 0, clickStage = 0;
-uint32_t clickAt = 0;
+uint32_t clickAt = 0, clickGapTicks = 0;
 bool tareStarted = false, consumeGesture = false;
 const char* problem = "No sensor sample";
+// Diagnostic printing runs on the other core, never in the 1 kHz control path.
+// Queue overflow drops logs, not control samples. No credentials are logged.
+struct PressLog {
+    const char* event;
+    const char* state;
+    const char* fault;
+    uint32_t time, dropped, age, seq, samples, downs, shorts, longs, releases, blocked;
+    uint32_t clicks, cancelled, lost;
+    long raw, zero, delta, filtered, low, high;
+    int screen, selected;
+    unsigned phase, pulse;
+    bool valid, motorOn, guard, rangeValid;
+    float fraction, speed, spring;
+};
+QueueHandle_t pressLogQueue = nullptr;
+uint32_t droppedPressLogs = 0;
+bool boundaryGuard = true;
+unsigned diagnosticPhase = 0;
+const char* phaseName(unsigned phase) {
+    static const char* names[] = {"IDLE", "TURN_ONLY", "SHORT_PRESS", "LONG_PRESS"};
+    return names[phase % 4];
+}
+void logPress(const char* event) {
+    if (!pressLogQueue) return;
+    const float width = TAU_F / app.slotsPerTurn();
+    const float displacement = atan2f(sinf(angleCache-activeCentre), cosf(angleCache-activeCentre));
+    PressLog item = {};
+    item.event = event; item.time = millis();
+    item.state = pressure.diagnosticState(item.time);
+    item.fault = pressure.fault ? pressure.fault : "NONE";
+    item.raw = pressure.lastRaw; item.zero = pressure.offset;
+    item.delta = pressure.observedDelta; item.filtered = pressure.filteredDelta;
+    item.valid = pressure.valid; item.age = item.time - pressure.lastData;
+    item.seq = pressure.totalSamples; item.samples = pressure.intervalSamples;
+    item.low = pressure.intervalMin; item.high = pressure.intervalMax;
+    item.rangeValid = pressure.intervalValid;
+    item.downs = pressure.downEvents; item.shorts = pressure.shortEvents;
+    item.longs = pressure.longEvents; item.releases = pressure.releases;
+    item.blocked = pressure.blockedPresses;
+    item.screen = int(app.state.screen); item.selected = app.state.selected;
+    item.fraction = displacement/width; item.speed = angularSpeed;
+    item.spring = springOutput; item.pulse = clickStage; item.motorOn = running;
+    item.guard = boundaryGuard; item.phase = diagnosticPhase;
+    item.clicks = completedClicks; item.cancelled = cancelledClicks; item.lost = trackLost;
+    item.dropped = droppedPressLogs;
+    if (xQueueSend(pressLogQueue, &item, 0) != pdTRUE) ++droppedPressLogs;
+}
+void pressLogTask(void*) {
+    PressLog item;
+    for (;;) if (xQueueReceive(pressLogQueue, &item, portMAX_DELAY) == pdTRUE) {
+        Serial.printf("DRIFT v2 | ms=%lu | %s | phase=%s | state=%s fault=%s | raw=%ld zero=%ld delta=%ld filt=%ld | valid=%d age=%lu seq=%lu | min=%ld max=%ld rangeValid=%d n=%lu | speed=%.3f spring=%.3f pulse=%u motor=%d | screen=%d app=%d pos=%.2f guard=%d | P=%ld R=%ld | D/S/L/R/B=%lu/%lu/%lu/%lu/%lu | clicks=%lu cancel=%lu lost=%lu drop=%lu | MIC=OFF\n",
+            (unsigned long)item.time, item.event, phaseName(item.phase), item.state, item.fault,
+            item.raw, item.zero, item.delta, item.filtered, int(item.valid),
+            (unsigned long)item.age, (unsigned long)item.seq, item.low, item.high,
+            int(item.rangeValid), (unsigned long)item.samples,
+            item.speed, item.spring, item.pulse, int(item.motorOn),
+            item.screen, item.selected, item.fraction, int(item.guard),
+            KnobPressure::Input::PRESS_COUNTS, KnobPressure::Input::RELEASE_COUNTS,
+            (unsigned long)item.downs, (unsigned long)item.shorts, (unsigned long)item.longs,
+            (unsigned long)item.releases, (unsigned long)item.blocked,
+            (unsigned long)item.clicks, (unsigned long)item.cancelled, (unsigned long)item.lost,
+            (unsigned long)item.dropped);
+    }
+}
+void serviceDiagnostic() {
+    static uint32_t reportedAt = 0;
+    if (millis() - reportedAt < 500) return;
+    reportedAt = millis(); logPress("SAMPLE"); pressure.clearInterval();
+}
+
 float wrapAngle(float a) { while (a > PI_F) a -= TAU_F; while (a < -PI_F) a += TAU_F; return a; }
 float positiveAngle(float a) { a = fmodf(a, TAU_F); return a < 0 ? a + TAU_F : a; }
 class GuiSensor : public Sensor {
@@ -88,9 +162,13 @@ void stop(const char* reason, bool fault = true) {
     app.state.reason[sizeof(app.state.reason) - 1] = 0;
     ++app.state.revision; publish();
     // Serial output only after power output has been disabled.
-    Serial.printf("STOP: %s\nCRC: %lu | Lost: %lu | Recovered: %lu | Clicks: %lu | Cancelled: %lu\n",
+    Serial.printf("Pressure delta: %ld | Filtered: %ld | Range: %ld..%ld | Down: %lu | Short: %lu | Long: %lu | Turn cancelled: %lu | Speed: %.2f rad/s\n",
+        pressure.signedDelta, pressure.filteredDelta, pressure.minimumDelta, pressure.maximumDelta,
+        (unsigned long)pressure.downEvents, (unsigned long)pressure.shortEvents,
+        (unsigned long)pressure.longEvents, (unsigned long)pressure.motionCancels, angularSpeed);
+    Serial.printf("STOP: %s\nCRC: %lu | Lost: %lu | Recovered: %lu | Clicks: %lu | Cancelled: %lu | Click gap ticks: %lu\n",
         reason, (unsigned long)crcErrors, (unsigned long)trackLost,
-        (unsigned long)recoveries, (unsigned long)completedClicks, (unsigned long)cancelledClicks);
+        (unsigned long)recoveries, (unsigned long)completedClicks, (unsigned long)cancelledClicks, (unsigned long)clickGapTicks);
 }
 void anchor() {
     activeCentre = angleCache; resetSpring(); resumedUs = micros();
@@ -113,18 +191,20 @@ void changedView(KnobApp::Screen before) {
 // Returns a spring error. Logical app changes and physical detents share one owner.
 float detentError() {
     float width = TAU_F / app.slotsPerTurn();
-    float snap = width / 2 + 2 * DEG_TO_RAD_F;
+    float snap = width / 2 + KnobHaptics::hysteresis(width);
     float error = wrapAngle(activeCentre - angleCache);
-    if (pressure.pressed || consumeGesture) return error;
     while (error < -snap || error > snap) {
         const int rawStep = error < 0 ? 1 : -1;
         const int direction = rawStep * KnobApp::RAW_TO_CCW;
         if (!app.canTurn(direction)) break; // Bounded value: elastic end stop.
         const auto before = app.state.screen;
         activeCentre = positiveAngle(activeCentre + rawStep * width);
-        if (before == KnobApp::Screen::Light)
+        if (!pressure.pressed && !consumeGesture && before == KnobApp::Screen::Light)
             KnobLight::request(direction > 0 ? KnobLight::Action::Brighter : KnobLight::Action::Dimmer);
-        app.turn(direction, millis());
+        // Keep detents moving without changing the target of an accepted press.
+        // No delayed navigation steps are replayed after release.
+        if (!KnobPressTurn::lockSelection(pressure.pressed, consumeGesture))
+            app.turn(direction, millis());
         changedView(before);
         if (before != app.state.screen) return 0;
         error = wrapAngle(activeCentre - angleCache);
@@ -194,7 +274,9 @@ void control(bool valid) {
     }
     if (!valid) {
         const bool interrupted = clickStage != 0;
-        if (interrupted) cancelClick();
+        // Invalid ticks output zero; preserve the original 10 ms pulse clock.
+        // Recovery must not restart or extend an already started pulse.
+        if (interrupted) ++clickGapTicks;
         if (!suspended) { suspended = true; suspensionUs = micros(); }
         if (!interrupted && micros() - lastGoodUs < HOLD_US && fabsf(angularSpeed) < 2) {
             heldOutput = true; ++heldTicks; return;
@@ -212,28 +294,34 @@ void control(bool valid) {
     if (app.state.screen == KnobApp::Screen::Value && fabsf(error) > 45 * DEG_TO_RAD_F) {
         stop("Value end-stop travel exceeded"); return;
     }
-    float springError = error > DEAD_ZONE ? error - DEAD_ZONE : error < -DEAD_ZONE ? error + DEAD_ZONE : 0;
     float ramp = min(1.0f, (millis() - startedMs) / 500.0f) * min(1.0f, (micros() - resumedUs) / 2000.0f);
-    motor.move(springCommand(SENSOR_SIGN * STIFFNESS * springError * ramp)); motor.loopFOC();
+    motor.move(springCommand(SENSOR_SIGN * KnobHaptics::demand(error, angularSpeed, TAU_F / app.slotsPerTurn()) * ramp)); motor.loopFOC();
 }
 void handleGesture(KnobPressure::Event event) {
     using E = KnobPressure::Event;
     if (event == E::None || latchedStop) return;
     const auto before = app.state.screen;
     if (event == E::Down) {
+        logPress("DOWN accepted");
         app.touch(millis());
         if (before == KnobApp::Screen::Standby) {
             consumeGesture = true; app.activate(millis()); anchor();
-        } else if (running) {
+        } else if (running && !consumeGesture) {
+            // Confirm the debounced press edge. Action is resolved on release/hold.
             ++app.state.clicks; KnobBackground::suppressClick(); clickStage = 1;
         }
     } else if (consumeGesture) {
         if (event == E::Short) consumeGesture = false;
     } else if (event == E::Short) {
+        logPress("SHORT action");
         if (before == KnobApp::Screen::Light) KnobLight::request(KnobLight::Action::Toggle);
         app.shortPress(millis());
     }
-    else if (event == E::Long) app.longPress(millis());
+    else if (event == E::Long) {
+        logPress("LONG action");
+        app.longPress(millis());
+        consumeGesture = true; // Do not navigate the new screen until release.
+    }
     changedView(before);
 }
 void serviceSettings() {
@@ -289,6 +377,12 @@ void setup() {
     bool ok = motor.initFOC(); motor.disable();
     if (!ok) { stop("FOC initialization failed"); return; }
     motor.voltage_limit = CLICK_VOLTAGE;
+    pressLogQueue = xQueueCreate(24, sizeof(PressLog));
+    if (!pressLogQueue || xTaskCreatePinnedToCore(pressLogTask, "pressLog", 4096, nullptr, 1, nullptr, 0) != pdPASS) {
+        stop("Pressure diagnostic task allocation failed"); return;
+    }
+    Serial.printf("PRESS DRIFT TEST v2 | P=%ld R=%ld | MIC=OFF | m=phase, i=sample, g/n=guard, x=stop\n",
+        KnobPressure::Input::PRESS_COUNTS, KnobPressure::Input::RELEASE_COUNTS);
     pressure.begin(); ready = true; startupAt = millis(); previousTickUs = micros();
     Serial.println("SmartKnob app GUI: release knob for automatic zero. x = stop, r = restart while stopped.");
     publish();
@@ -297,13 +391,25 @@ void loop() {
     if (Serial.available()) {
         char key = Serial.read();
         if (key == 'x' || key == 'X') stop("Stopped by user", false);
+        else if (key == 'g' || key == 'n') {
+            if (pressure.pressed || clickStage || consumeGesture || pressure.isBlocked())
+                logPress("MODE unchanged: release first");
+            else {
+                boundaryGuard = key == 'g';
+                pressure.resetGesture();
+                logPress(boundaryGuard ? "MODE boundary guard ON" : "MODE boundary guard OFF");
+            }
+        } else if (key == 'm') {
+            diagnosticPhase = (diagnosticPhase + 1) % 4;
+            logPress("MARK");
+        } else if (key == 'i') logPress("MANUAL SAMPLE");
         else if (key == 'r' && latchedStop) { disableMotor(); ESP.restart(); }
     }
     app.updateTimer(millis());
     if (!ready || latchedStop) {
         static uint32_t lastStoppedPublish = 0;
         if (millis()-lastStoppedPublish >= 250) { lastStoppedPublish=millis(); publish(); }
-        delay(5); return;
+        serviceDiagnostic(); delay(5); return;
     }
     uint32_t now = micros(), gap = now - previousTickUs;
     if (gap < 1000) return;
@@ -318,11 +424,18 @@ void loop() {
     if (latchedStop) return;
     if (!clickStage) {
         // A brief encoder dropout must not discard a completed pressure gesture.
-        // The motor path independently cancels pulses on invalid encoder data.
+        // The motor path zeros invalid ticks without extending the click envelope.
         bool gestures = app.state.screen != KnobApp::Screen::Boot &&
                         (!running || millis() - startedMs >= 500);
         // During startup, arm on a stable released input, but consume every event.
+        const float fraction = wrapAngle(angleCache-activeCentre) / (TAU_F/app.slotsPerTurn());
+        pressure.setStartAllowed(KnobPressTurn::allowStart(
+            boundaryGuard, app.state.screen == KnobApp::Screen::Home, fraction));
+        const auto beforeBlocked = pressure.blockedPresses;
+        const auto beforeRelease = pressure.releases;
         const auto event = pressure.poll(true);
+        if (pressure.blockedPresses != beforeBlocked) logPress("BLOCKED at app boundary; release first");
+        if (pressure.releases != beforeRelease) logPress("RELEASE");
         if (gestures) handleGesture(event);
         else if (event == KnobPressure::Event::Down) consumeGesture = true;
         if (pressure.fault) { stop(pressure.fault); return; }
@@ -335,14 +448,17 @@ void loop() {
         }
     } else {
         const auto before = app.state.screen;
-        app.tick(millis()); changedView(before);
-        if (app.state.screen == KnobApp::Screen::Standby && valid &&
+        // Timer still updates above; postpone automatic view changes during a press.
+        if (!pressure.pressed && !consumeGesture) app.tick(millis());
+        changedView(before);
+        if (app.state.screen == KnobApp::Screen::Standby && !pressure.pressed && !consumeGesture && valid &&
             fabsf(wrapAngle(angleCache - standbyAngle)) > 8 * DEG_TO_RAD_F) {
             app.activate(millis()); anchor(); // Consume wake movement.
         }
         if (app.interactive() && !running && !consumeGesture) startMotor();
     }
     if (app.state.screen != KnobApp::Screen::Boot) serviceSettings();
+    serviceDiagnostic();
     static uint32_t lastPublish = 0;
     if (millis() - lastPublish >= 10) { lastPublish = millis(); publish(); }
 }

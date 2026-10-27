@@ -1,0 +1,108 @@
+SmartKnob Press + Turn Test v1
+
+Basis: deine hochgeladenen app_gui_main.cpp und pressure.h vom 26.10.2026.
+Experimenteller Test mit laufendem Motor, Display und normaler App-Oberflaeche.
+
+INSTALLATION
+Vorher die aktuellen zwei Dateien sichern. ZIP in den Repository-Hauptordner
+entpacken und firmware zusammenfuehren, nicht den ganzen Ordner ersetzen.
+Ersetzt: firmware/src/app_gui_main.cpp und firmware/src/app_gui/pressure.h
+Neu: firmware/src/app_gui/press_turn_policy.h und Testdateien unter docs/tests.
+Die vorhandene haptics.h, model.h, platformio.ini und private Konfiguration
+bleiben bestehen. Keine Aenderung an Motor-Kalibrierung oder Versorgung.
+
+Im firmware-Terminal (vorher seriellen Monitor mit Ctrl+C schliessen):
+pio run -e app_gui -t upload
+
+NUR nach erfolgreichem Upload:
+pio device monitor -e app_gui -b 115200
+
+i zeigt: v1 P18000 R13000 guard ON
+Beim Start voll zusammengebauten Knob unberuehrt lassen fuer automatische Nullung.
+
+BEDIENUNG
+Normalbetrieb mit Motor, LEDs, GUI und Druck-Klick.
+g = Uebergangssperre EIN (Startwert bei jedem Neustart)
+n = Uebergangssperre AUS, fuer direkten Vergleich
+i = Version/Modus protokollieren
+x = Motor stoppen
+r = Neustart nach Stopp, dabei Knob unberuehrt lassen
+
+Moduswechsel nur bei losgelassenem Knob. Nach Aenderung muss wieder eine
+Freigabe erkannt werden. Abgelehnte Grenz-Drucke ebenfalls zuerst loslassen.
+
+WAS GEANDERT IST
+- Druckschwelle 18000 und Loslassschwelle 13000, unabhaengig voneinander.
+  Testkonstanten stehen in pressure.h; alte model.h-Schwelle wird hier ignoriert.
+- Keine Geschwindigkeits-Sperre fuer Drucke, kein 120ms Warten auf Drehstillstand,
+  kein Abbruch eines angenommenen Drucks nach 6 Grad oder beim Rastpunktwechsel.
+- In Home/Karussell nur neue Drucke nahe dem Uebergang blockieren. Akzeptanzbereich
+  +/-0.40 Rastabstaende, bei 8 Rastpunkten +/-18 Grad um das aktuelle Zentrum.
+  Andere App-Seiten haben diese Uebergangssperre nicht.
+- Angenommener Druck: Auswahl/Wert bleiben bis Loslassen fest. Mechanische
+  Rastzentren laufen beim Weiterdrehen mit; es werden keine Drehschritte fuer
+  spaeter gespeichert. Dadurch wirkt der Druck auf die urspruengliche Auswahl.
+- Klickfeedback bei DOWN; Aktion bei kurzem Loslassen, Ruecknavigation bei langem
+  Halten. Lange Drucke erzeugen keine zusaetzliche kurze Aktion beim Loslassen.
+- Ein negativer Ausschlag verwirft keinen Druck mehr lautlos. Zum Loslassen
+  muss das Rohsignal weiterhin 60ms innerhalb +/-13000 bleiben.
+- Tare muss ueber 32 Samples stabil sein (Spannweite maximal 5000 Counts).
+
+UNVERAENDERT
+Druckbestaetigung 50ms, Langdruck 900ms, Filter4, positive Druckrichtung.
+Klick 3V, 5ms je Richtung; Federlimit 1V; bestehendes haptics.h.
+150ms Ausblendung der Druckauswertung nach dem Motorklick bleibt fuer diesen
+Vergleich bestehen. Sehr schnelle Doppeldrucke koennen damit weiterhin begrenzt
+sein. Rohdaten werden in der Ausblendung weiter auf ADC-Endwerte geprueft.
+ADC-/Treiberfehler, Zeitlimits und 5ms-Sensorausfallabschaltung bleiben aktiv.
+Dieses Experiment verspricht keine Fehlerfreiheit und entfernt keine Schutzstopps.
+
+TESTREIHENFOLGE
+1. i senden. Zehn normale kurze Drucke aus Rastmitte, jeweils loslassen.
+2. Zehn Drucke mit kleiner gleichzeitiger Drehbewegung, beide Richtungen.
+   Erwartung: ein Klick, danach eine passende App-Aktion, kein stiller Abbruch.
+3. Nur drehen (mindestens 20 Sekunden), Hand wie normalerweise am Knob.
+   Erwartung: kein DOWN, kein ungewolltes Oeffnen einer App.
+4. Im Karussell zwischen zwei Rastpunkten druecken. Bei aktivem g in der
+   Randzone: BLOCKED, kein Klick und keine Aktion. Gedrueckt Richtung Rastmitte
+   drehen darf keine spaete Aktion ausloesen. Erst loslassen und neu druecken.
+5. Nach Loslassen n senden und die Schritte 2 und 3 wiederholen. Beobachten,
+   ob Fehlklicks beim Drehen zunehmen. Danach wieder g senden.
+6. Lange Drucke pruefen (besonders Light: Rueckkehr Home ohne Licht-Toggle).
+   Weiterdrehen waehrend Halten darf keine andere Aktion auswaehlen.
+
+Sende das Protokoll mit Notiz, welche Phase wann war und wie viele Drucke du
+versucht hast. Falls nur Drehen einen DOWN ausloest, ist das eine wichtige
+Fehlausloesung und kein erfolgreicher Drucktest. Nicht durch staerkeres Druecken
+kaschieren. Bei unerwartetem Motorverhalten x und STOP-Grund senden.
+
+PROTOKOLL
+DOWN accepted = Druck angenommen, Klick angefordert (keine Garantie fuer Pulsabschluss)
+SHORT action = kurze Aktion wird ausgefuehrt
+LONG action = lange Aktion wird ausgefuehrt
+RELEASE = Loslassen erkannt
+BLOCKED at app boundary = neuer Druck am Uebergang verworfen bis Loslassen
+pos = Abstand zum aktuellen Rastzentrum als Anteil eines Rastabstands
+app = App-Index ab 0; screen = interner Bildschirmtyp
+Dropped >0 = Diagnosezeilen verworfen; Steuerung wartet nicht auf den Monitor.
+Die Ausgabe wird ueber Queue auf Core0 verarbeitet, nicht synchron im Motorregelkreis.
+
+PRUEFSTATUS
+Hosttests fuer Druck, Freigabe, Sperrzone, Rastwechsel und Klickablauf bestanden.
+Getestet wurden auch Langdruck ohne Kurz-Aktion, keine spaete Ausloesung eines
+abgelehnten Drucks, ADC-Endwert waehrend Ausblendung, Timeout sowie bestehende
+Pulsdauer und Abschaltung bei 5ms-Sensorausfall mit Hardware-Mocks.
+Gesamte main-Datei auf C++-Syntax mit Hardware-Stubs geprueft, gegen den hier
+vorhandenen Modell-Header. Das ist KEIN ESP32-Build und KEIN Hardwaretest.
+PlatformIO/ESP32-Toolchain war hier nicht installiert. Build/Upload bei dir offen.
+
+Hosttests aus firmware (optional, g++ benoetigt):
+g++ -std=c++17 -I docs/tests/press-turn-stubs -I src/app_gui docs/tests/press-turn-host.cpp -o press-turn-host
+./press-turn-host
+python docs/tests/press-turn-integration.py
+
+RUECKKEHR
+Die vorher gesicherten app_gui_main.cpp und pressure.h zurueckkopieren und
+app_gui erneut hochladen. Keine NVS-Daten oder WLAN-Schluessel werden durch
+Installation dieses Patches geloescht. Normale App-Einstellungen speichern
+weiter wie bisher; Testmodus g/n wird nicht gespeichert.
