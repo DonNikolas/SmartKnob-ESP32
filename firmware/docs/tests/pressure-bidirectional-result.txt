@@ -1,0 +1,12 @@
+﻿Pressure test — 2026-10-27
+
+Positive and negative pressure changes are detected.
+The recorded test contains 13 presses: 8 short and 5 long.
+All 13 haptic clicks completed without cancellation.
+The microphone was disabled. The app-boundary guard was disabled during the pressure trials.
+
+Known limitations:
+Press detection still depends on where and how the knob is pressed.
+After the final release, rearming took approximately 4.7 seconds.
+Further presses are ignored while waiting for a stable neutral signal.
+This is an intermediate test result, not final reliability validation.

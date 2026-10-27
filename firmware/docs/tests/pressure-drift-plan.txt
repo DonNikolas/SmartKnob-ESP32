@@ -1,0 +1,102 @@
+SmartKnob Druck-Langzeitdiagnose v2 - Mikrofon AUS
+
+Basis: deine hochgeladenen pressure(2).h, app_gui_main(2).cpp und view.cpp.
+Schwellen unveraendert: Druck 25000, Loslassen 10000.
+Kein automatisches Nachnullen, keine neue Geschwindigkeitssperre, keine
+Aenderung der Motor-Kalibrierung, Pulsstaerke, Gestenregeln oder Schutzstopps.
+
+Installation
+Vor dem Kopieren diese vier aktuellen Dateien ausserhalb von firmware/src sichern:
+- src/app_gui_main.cpp
+- src/app_gui/pressure.h
+- src/app_gui/view.cpp
+- src/app_gui/background.cpp
+ZIP im Repository-Hauptordner entpacken, firmware zusammenfuehren (nicht ersetzen).
+Vorhandene press_turn_policy.h, haptics.h und alle anderen Dateien bleiben bestehen.
+Die beigelegte background.cpp ist eine voruebergehende Sensor-only-Testversion
+auf Basis der vorhandenen Projektimplementierung. Sie startet nur den BME280.
+
+Im firmware-Terminal, Monitor zuvor mit Ctrl+C schliessen:
+pio run -e app_gui -t upload
+
+NUR nach SUCCESS beim Upload den Monitor mit Dateiprotokollierung starten:
+pio device monitor -e app_gui -b 115200 --filter log2file
+
+Der log2file-Filter zeigt beim Start den Namen der erzeugten Logdatei.
+Beim Start Knob unberuehrt lassen fuer die automatische Nullung.
+Mit i kontrollieren: DRIFT v2, P=25000 R=10000 und MIC=OFF.
+
+Mikrofon
+- Kein Audio-Task, keine I2S/DMA-Aufnahme, GPIO38 (PDM-Clock) bleibt LOW.
+- Keine Klatschaktionen und kein Klatsch-LED-Blitz in der GUI.
+- Sensorseite zeigt 'Mic off - pressure test'.
+- Die Versorgung des Mikrofonbausteins ist weiterhin physisch verbunden.
+- BME280, GUI, Motor, WLAN, manuelle Lichtsteuerung bleiben verfuegbar.
+- Wegfall der Mikrofonlast aendert auch die Systemlast. Falls das Problem damit
+  verschwindet, ist das noch kein Beweis fuer Nullpunktdrift.
+
+Testablauf (keine Schwellen/Modi waehrend des Versuchs aendern)
+1. Nach Neustart 30 Sekunden unberuehrt beobachten (phase=IDLE).
+2. m -> TURN_ONLY: 15 Sekunden nur drehen, langsam und schneller, ohne Druck.
+3. m -> SHORT_PRESS: 10 normale kurze Drucke mit vollstaendigem Loslassen.
+4. m -> LONG_PRESS: 3 Drucke je etwa zwei Sekunden halten; Verhalten notieren.
+5. m -> IDLE: wieder abstellen. Nach 5, 10 und 20 Minuten die Schritte 2-5
+   wiederholen, ohne Neustart oder Nachnullen. Uhrzeiten/Versuche notieren.
+Das automatische Standby bleibt aktiv. motor=0 zeigt abgeschalteten Motor.
+Nach einer Ruhephase normal aufwecken; das Aufwecken separat von den Versuchen
+notieren. Wir beobachten bewusst das normale Standby-Verhalten.
+Wenn der Fehler frueher auftritt: i senden, normal reproduzieren, Log sichern.
+Bei unkontrolliertem Verhalten x; der Stoppgrund bleibt sichtbar.
+
+Tasten
+m zyklisch IDLE -> TURN_ONLY -> SHORT_PRESS -> LONG_PRESS -> IDLE
+  Nur Markierung im Protokoll! Bewegt/schaltet den Motor nicht und nullt nicht.
+i sofortiger Diagnoseeintrag mit aktuellen Werten
+g/n bestehende Uebergangssperre ein/aus (im Langzeittest bei g belassen)
+x Motor stoppen
+r nach Stopp neu starten (erst nach Sichern des fehlerhaften Abschnitts)
+
+Ausgabe alle 500ms plus Ereignisse
+ms: Zeit seit Start, Millisekunden
+raw: letzter absoluter ADC-Rohwert; zero: beim Start gespeicherter Nullpunkt
+delta: (raw-zero) in Druckrichtung, auch waehrend der Klick-Ausblendung erfasst
+filt: gefilterter Wert fuer Gesten; waehrend CLICK_BLANK/FILTER_FILL nicht aktuell
+valid: Nullpunkt/Sensorstatus; age: Alter des letzten ADC-Werts in ms
+seq: Anzahl eingelesener ADC-Samples
+min/max: kleinster/groesster Delta-Wert seit letzter periodischer Ausgabe
+rangeValid/n: ob bzw. wie viele Samples im Intervall vorhanden sind
+state: ARMED, PRESS_PENDING, HELD, RELEASE_PENDING, LONG_HELD,
+       WAIT_RELEASE, BOUNDARY_BLOCKED, CLICK_BLANK, FILTER_FILL, TARE, NO_ZERO, FAULT
+speed: gefilterte Drehgeschwindigkeit in rad/s, spring: letzte Federspannungsanforderung
+pulse: Klickphase, motor: Motor an/aus; spring ist kein gemessener Strom/Drehmoment
+screen/app: Bildschirmtyp/App-Index ab 0; pos: Anteil eines Rastabstands
+guard: Uebergangssperre aktiv; P/R: echte konfigurierte Schwellen
+D/S/L/R/B: kumulierte Down/Short/Long/Release/Boundary-Block-Ereignisse
+clicks/cancel/lost: abgeschlossene/abgebrochene Klicks und Encoder-Track-Lost-Zaehler
+drop: verworfene Diagnoseeintraege bei voller Queue, nicht verworfene ADC-Samples
+MIC=OFF: diese Firmware hat die Mikrofonfunktion deaktiviert
+
+Ereignisse zeigen den bisherigen Entscheidungsweg: DOWN accepted, SHORT action,
+LONG action, RELEASE, BLOCKED at app boundary. Bei SAMPLE wird NICHT gedrueckt.
+Die 150ms-Ausblendung nach dem Klick sowie 50ms Druck- und 60ms Loslassbestaetigung
+bleiben unveraendert. Keine automatische Driftkorrektur vor der Ursachenanalyse.
+Ein Delta nahe der Druckschwelle im unberuehrten Zustand waere ein Hinweis;
+physisch unberuehrt kann die Software nicht selbst sicher feststellen.
+
+Auswertung
+Bitte Logdatei senden und sagen, in welchen Phasen Fehlaktionen entstanden,
+wie viele Drucke versucht wurden, ob/ab wann das Geraet waermer war und ob
+Standby aktiv war. Nicht absichtlich erwaermen oder staerker druecken.
+
+Pruefstatus
+Hosttests fuer feste Nullung, Rohdatenerfassung waehrend Klick-Ausblendung,
+Intervall-Min/Max, Snapshot-Ausgabe, Queue-Ueberlauf, Druck-/Langdruckregeln,
+ADC-Saettigung und Timeout bestanden. Logger-Format mit g++ geprueft.
+Motorregelung/Gestenentscheidung gegen deine Dateien auf Unveraendertheit geprueft.
+Mikrofon-Initialisierung und Klatsch-Aktionspfad im Quelltext entfernt/geprueft.
+Kein abgeschlossener ESP32-Build oder Hardwaretest hier; PlatformIO war nicht installiert.
+
+Rueckkehr
+Vier gesicherte Dateien zurueckkopieren und app_gui erneut hochladen.
+Damit wird auch die bisherige Mikrofonfunktion wiederhergestellt.
+Keine privaten Zugangsdaten, kein Firmware-Binary in diesem Paket.

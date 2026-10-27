@@ -12,7 +12,8 @@ constexpr int LED_COUNT = 36;
 constexpr int LED_BOTTOM = 0;
 constexpr int LED_CCW_STEP = 1;
 constexpr int RAW_TO_CCW = 1;
-constexpr int PRESS_THRESHOLD = 15000;
+constexpr int PRESS_THRESHOLD = 12000;
+constexpr int PRESS_DIRECTION = 1; // Positive measured pressure delta on this assembly.
 enum class Screen : uint8_t { Boot, Home, Value, Menu, Status, Standby, Stopped, Fault, Sensors, Radar, Timer, Light, HomeFeeds };
 enum class Notice : uint8_t { Applied, Info, Demo };
 struct App {
