@@ -1,3 +1,4 @@
+// MQTT_PREP_V1
 // Temporary pressure-drift diagnostic. Microphone acquisition disabled.
 // Environmental sensor worker retained from the project's background.cpp.
 #include <Arduino.h>
@@ -8,6 +9,7 @@
 #include <freertos/queue.h>
 #include <math.h>
 #include "background.h"
+#include "mqtt_link.h"
 namespace KnobBackground {
 namespace {
 QueueHandle_t environmentQueue = nullptr;
@@ -36,6 +38,7 @@ void environmentTask(void*) {
             if (value.valid) value.measuredAt = millis();
         }
         if (!value.valid) initialized = false;
+        KnobMQTT::temperature(value.temperature, value.valid, value.measuredAt);
         ++value.sequence;
         xQueueOverwrite(environmentQueue, &value);
         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -44,6 +47,7 @@ void environmentTask(void*) {
 }
 void suppressClick() {} // No audio worker in this diagnostic firmware.
 void begin() {
+    KnobMQTT::begin();
     // Keep microphone clock static: no PDM clock, I2S/DMA or clap task.
     // The microphone supply remains physically connected.
     pinMode(38, OUTPUT); digitalWrite(38, LOW);

@@ -1,3 +1,4 @@
+// MQTT_PREP_V1
 // Separate core-0 worker. No motor access, NVS writes or blocking GUI requests.
 #include <Arduino.h>
 #include <WiFi.h>
@@ -10,6 +11,7 @@
 #include <time.h>
 #include <string.h>
 #include "home_feeds_parse.h"
+#include "mqtt_link.h"
 #include "home_feeds_roots.h"
 namespace KnobHomeFeeds {
 namespace {
@@ -18,6 +20,8 @@ std::atomic<int> selected{-1};
 Snapshot snapshot;
 uint32_t attempts[COUNT]={};bool attempted[COUNT]={};
 void status(int index,const char* text){
+    if(strcmp(snapshot.readings[index].status,text))
+        Serial.printf("HOME_FEED %u: %s\n",FEEDS[index].id,text);
     snprintf(snapshot.readings[index].status,sizeof(snapshot.readings[index].status),"%s",text);
     ++snapshot.sequence;xQueueOverwrite(queue,&snapshot);
 }
@@ -51,7 +55,7 @@ void task(void*){
     uint32_t lastFetch=0;bool fetched=false;
     for(;;){
         int index=selected.load();uint32_t now=millis();
-        if(index>=0 && index<COUNT){
+        if(index>=0 && index<HTTP_COUNT){
             if(WiFi.status()!=WL_CONNECTED){
                 if(strcmp(snapshot.readings[index].status,"Wi-Fi offline"))status(index,"Wi-Fi offline");
             }else if(time(nullptr)<1700000000){
@@ -72,5 +76,14 @@ void begin(){
     }
 }
 void select(bool active,int index){selected.store(active && index>=0 && index<COUNT?index:-1);}
-void read(Snapshot& result){if(queue)xQueuePeek(queue,&result,0);}
+void read(Snapshot& result){
+    result=Snapshot{};
+    if(queue)xQueuePeek(queue,&result,0);
+    KnobMQTT::Snapshot mqtt;KnobMQTT::read(mqtt);
+    Reading r;r.value=mqtt.value;r.receivedAt=mqtt.receivedAt;
+    r.valid=mqtt.valid && mqtt.connected;
+    snprintf(r.status,sizeof(r.status),"%s",mqtt.status);
+    result.readings[MQTT_INDEX]=r;
+    result.sequence=result.sequence + mqtt.sequence;
+}
 }

@@ -19,6 +19,7 @@
 #include "app_gui/view.h"
 #include "app_gui/settings_store.h"
 #include "app_gui/light_link.h"
+#include "network_setup/wifi_portal.h"
 
 constexpr float TAU_F = 6.28318530718f, PI_F = TAU_F / 2, DEG_TO_RAD_F = PI_F / 180;
 constexpr uint8_t MOTOR_PINS[] = {4, 7, 5, 16, 6, 15};
@@ -184,7 +185,7 @@ void startMotor() {
 void changedView(KnobApp::Screen before) {
     if (app.state.screen == before) return;
     anchor();
-    if (app.state.screen == KnobApp::Screen::Standby) {
+    if (app.state.screen == KnobApp::Screen::Standby || app.state.screen == KnobApp::Screen::WifiSetup) {
         standbyAngle = angleCache; disableMotor();
     }
 }
@@ -353,6 +354,7 @@ void setup() {
     for (uint8_t pin : MOTOR_PINS) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
     pinMode(9, OUTPUT); digitalWrite(9, LOW); pinMode(DRIVER_DIAG, INPUT);
     Serial.begin(115200);
+    if(KnobWifiPortal::consumeRequest()){KnobWifiPortal::run();return;}
     KnobSettings::load(app.state);
     savedSettings = observedSettings = KnobSettings::capture(app.state);
     if (!KnobView::begin()) { stop("GUI initialization failed"); return; }
@@ -404,6 +406,14 @@ void loop() {
             logPress("MARK");
         } else if (key == 'i') logPress("MANUAL SAMPLE");
         else if (key == 'r' && latchedStop) { disableMotor(); ESP.restart(); }
+    }
+    if(ready && !latchedStop && app.state.screen==KnobApp::Screen::WifiSetup){
+        disableMotor();publish();
+        // Persist current app preferences before changing boot mode. Every NVS
+        // write happens after disabling motor output, as in serviceSettings().
+        if(!KnobSettings::save(KnobSettings::capture(app.state))){stop("Settings save failed before Wi-Fi setup");return;}
+        if(!KnobWifiPortal::requestNextBoot()){stop("Wi-Fi setup request could not be saved");return;}
+        ESP.restart();return;
     }
     app.updateTimer(millis());
     if (!ready || latchedStop) {

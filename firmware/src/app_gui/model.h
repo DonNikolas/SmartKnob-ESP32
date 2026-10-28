@@ -7,14 +7,19 @@
 
 namespace KnobApp {
 constexpr int APP_COUNT = 9;
-constexpr int SENSOR_APP = 5, RADAR_APP = 6, MORE_APP = 7, HOME_FEEDS_APP = 8;
+constexpr int SENSOR_APP = 5, RADAR_APP = 6, SETTINGS_APP = 7, MORE_APP = SETTINGS_APP, HOME_FEEDS_APP = 8;
 constexpr int LED_COUNT = 36;
 constexpr int LED_BOTTOM = 0;
 constexpr int LED_CCW_STEP = 1;
 constexpr int RAW_TO_CCW = 1;
 constexpr int PRESS_THRESHOLD = 12000;
 constexpr int PRESS_DIRECTION = 1; // Positive measured pressure delta on this assembly.
-enum class Screen : uint8_t { Boot, Home, Value, Menu, Status, Standby, Stopped, Fault, Sensors, Radar, Timer, Light, HomeFeeds };
+enum class Screen : uint8_t { Boot, Home, Value, Menu, Status, Standby, Stopped, Fault, Sensors, Radar, Timer, Light, HomeFeeds, StandbySettings, WifiConfirm, WifiSetup, Count };
+constexpr int SETTINGS_MENU_COUNT=3;
+constexpr int STANDBY_OPTION_COUNT=6;
+static constexpr uint32_t STANDBY_SECONDS[STANDBY_OPTION_COUNT]={0,30,60,120,300,600};
+static constexpr const char* STANDBY_LABELS[STANDBY_OPTION_COUNT]={"Off","30 sec","1 min","2 min","5 min","10 min"};
+inline bool validStandby(int index){return index>=0 && index<STANDBY_OPTION_COUNT;}
 enum class Notice : uint8_t { Applied, Info, Demo };
 struct App {
     const char* name;
@@ -31,7 +36,7 @@ static constexpr App APPS[APP_COUNT] = {
     {"System", "DISPLAY", "%", 0xC000FF, 10, 100, 1, 80, 1},
     {"Sensors", "LIVE READINGS", "", 0x00FFD0, 0, 0, 0, 0, 1},
     {"Radar", "AIRCRAFT", "", 0xFF8000, 0, 0, 0, 0, 1},
-    {"More", "OPTIONS", "", 0xFFFFFF, 0, 0, 0, 0, 1},
+    {"Settings", "OPTIONS", "", 0xFFFFFF, 0, 0, 0, 0, 1},
     {"Home Sensors", "BOXTEC", "", 0xFF4080, 0, 0, 0, 0, 1}
 };
 inline int wrap(int v, int n) { int r = v % n; return r < 0 ? r + n : r; }
@@ -42,6 +47,7 @@ struct State {
     int selected = 0, menu = 0, draft = 15;
     int radarRange = 3, radarAircraft = 0;
     int homeFeed = 0;
+    int standbyOption = 2, wifiChoice = 1;
     bool radarDetails = false;
     int values[5] = {15, 75, 60, 220, 80};
     uint32_t revision = 0, activityAt = 0, noticeAt = 0;
@@ -67,7 +73,7 @@ public:
     void touch(uint32_t now) { state.activityAt = now; ++state.revision; }
     bool interactive() const {
         return state.screen == Screen::Home || state.screen == Screen::Value ||
-               state.screen == Screen::Menu || state.screen == Screen::Status || state.screen == Screen::Sensors || state.screen == Screen::Radar || state.screen == Screen::Timer || state.screen == Screen::Light || state.screen == Screen::HomeFeeds;
+               state.screen == Screen::Menu || state.screen == Screen::Status || state.screen == Screen::Sensors || state.screen == Screen::Radar || state.screen == Screen::Timer || state.screen == Screen::Light || state.screen == Screen::HomeFeeds || state.screen == Screen::StandbySettings || state.screen == Screen::WifiConfirm;
     }
     int brightness() const {
         if (state.screen == Screen::Standby) return 10;
@@ -80,6 +86,7 @@ public:
         return 12;
     }
     bool canTurn(int dir) const {
+        if(state.screen==Screen::StandbySettings) return dir>0 ? state.standbyOption<STANDBY_OPTION_COUNT-1 : state.standbyOption>0;
         if (state.screen != Screen::Value) return interactive();
         const App& a = APPS[state.selected];
         return dir > 0 ? state.draft < a.high : state.draft > a.low;
@@ -87,6 +94,12 @@ public:
     void turn(int dir, uint32_t now) {
         if (state.screen == Screen::Standby) { activate(now); return; }
         if (!interactive()) return;
+        if(state.screen==Screen::StandbySettings){
+            int next=state.standbyOption+dir;
+            state.standbyOption=next<0?0:next>=STANDBY_OPTION_COUNT?STANDBY_OPTION_COUNT-1:next;
+            touch(now);return;
+        }
+        if(state.screen==Screen::WifiConfirm){state.wifiChoice=wrap(state.wifiChoice+dir,2);touch(now);return;}
         if (state.screen == Screen::Timer) {
             if (!state.timerRunning) {
                 state.timerDone = false; state.timerRemaining = 0;
@@ -102,7 +115,7 @@ public:
         }
         if (state.screen == Screen::Sensors || state.screen == Screen::Light) { touch(now); return; }
         if (state.screen == Screen::Home) state.selected = wrap(state.selected + dir, APP_COUNT);
-        else if (state.screen == Screen::Menu) state.menu = wrap(state.menu + dir, 4);
+        else if (state.screen == Screen::Menu) state.menu = wrap(state.menu + dir, SETTINGS_MENU_COUNT);
         else if (state.screen == Screen::Value) {
             const App& a = APPS[state.selected];
             int next = state.draft + dir * a.step;
@@ -138,17 +151,19 @@ public:
                 state.screen = Screen::Timer;
             } else show(Notice::Applied, Screen::Home, now);
         } else if (state.screen == Screen::Menu) {
-            if (state.menu == 0) show(Notice::Info, Screen::Menu, now);
-            else if (state.menu == 1) show(Notice::Demo, Screen::Menu, now);
-            else if (state.menu == 2) state.screen = Screen::Standby;
-            else state.screen = Screen::Home;
-        } else if (state.screen == Screen::Status) state.screen = returnTo;
+            if(state.menu==0){state.wifiChoice=1;state.screen=Screen::WifiConfirm;}
+            else if(state.menu==1)state.screen=Screen::StandbySettings;
+            else state.screen=Screen::Home;
+        } else if(state.screen==Screen::StandbySettings)state.screen=Screen::Menu;
+        else if(state.screen==Screen::WifiConfirm)state.screen=state.wifiChoice==0?Screen::WifiSetup:Screen::Menu;
+        else if (state.screen == Screen::Status) state.screen = returnTo;
         else if (state.screen == Screen::Standby || state.screen == Screen::Sensors) state.screen = Screen::Home;
         else return;
         touch(now);
     }
     void longPress(uint32_t now) {
-        if (state.screen == Screen::Home) state.screen = Screen::Standby;
+        if(state.screen==Screen::StandbySettings || state.screen==Screen::WifiConfirm)state.screen=Screen::Menu;
+        else if (state.screen == Screen::Home) state.screen = Screen::Standby;
         else if (state.screen == Screen::Value || state.screen == Screen::Menu || state.screen == Screen::Radar || state.screen == Screen::Timer || state.screen == Screen::Light || state.screen == Screen::HomeFeeds) state.screen = Screen::Home;
         else if (state.screen == Screen::Status) state.screen = returnTo;
         else if (state.screen == Screen::Standby || state.screen == Screen::Sensors) state.screen = Screen::Home;
@@ -170,7 +185,13 @@ public:
             (state.notice == Notice::Applied ? 650U : 2200U)) {
             state.screen = returnTo; touch(now);
         }
-        if (state.screen == Screen::Home && now - state.activityAt >= 60000U) {
+        // Auto-standby applies to normal app views. Do not interrupt settings,
+        // Wi-Fi confirmation or a running timer. Off only disables automatic sleep.
+        const bool idleScreen=state.screen==Screen::Home || state.screen==Screen::Value ||
+            state.screen==Screen::Sensors || state.screen==Screen::Radar || state.screen==Screen::Timer ||
+            state.screen==Screen::Light || state.screen==Screen::HomeFeeds;
+        const uint32_t seconds=validStandby(state.standbyOption)?STANDBY_SECONDS[state.standbyOption]:60;
+        if (idleScreen && !state.timerRunning && !(state.timerDone && now-state.timerDoneAt<10000U) && seconds && now - state.activityAt >= seconds*1000U) {
             state.screen = Screen::Standby; touch(now);
         }
     }

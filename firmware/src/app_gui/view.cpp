@@ -1,3 +1,4 @@
+// MQTT_PREP_V1
 // App renderer adapted with ChatGPT assistance from the Arduino UI prototype.
 // Core 0 owns LVGL, SPI3, NeoPixel and backlight. Core 1 owns all app/motor state.
 #include <Arduino.h>
@@ -15,6 +16,7 @@
 #include "home_feeds.h"
 #include <time.h>
 #include "knob_fonts.h"
+#include "clock_text.h"
 
 #if !CONFIG_IDF_TARGET_ESP32S3 || ARDUINO_RUNNING_CORE != 1
 #error "This GUI requires ESP32-S3 with the Arduino loop on core 1."
@@ -37,12 +39,13 @@ QueueHandle_t states = nullptr, resultQueue = nullptr;
 lv_color_t pixels[240 * 20];
 lv_disp_draw_buf_t drawBuffer;
 lv_disp_drv_t displayDriver;
-lv_obj_t *views[13], *cards[APP_COUNT], *homeTitle, *homeValue;
+lv_obj_t *views[static_cast<int>(Screen::Count)], *cards[APP_COUNT], *homeTitle, *homeValue;
 lv_obj_t *valueTitle, *valueText, *valueUnit, *valueIcon, *valueDots[36];
-lv_obj_t *menuFocus, *menuRows[4], *noticeTitle, *noticeText, *noticeIcon;
+lv_obj_t *menuFocus, *menuRows[SETTINGS_MENU_COUNT], *noticeTitle, *noticeText, *noticeIcon;
 lv_obj_t *sensorTemperature, *sensorHumidity, *sensorPressure, *sensorStatus, *audioStatus;
 KnobHomeFeeds::Snapshot homeData;
-lv_obj_t *feedName,*feedValue,*feedUnit,*feedStatus;
+lv_obj_t *feedName,*feedValue,*feedUnit,*feedStatus,*feedError;
+lv_obj_t *clockLabel,*standbyValue,*wifiFocus,*wifiRows[2];
 KnobLight::Snapshot lightData;
 lv_obj_t *lightAction, *lightStatus;
 lv_obj_t *timerArc, *timerText, *timerStatus, *settingsError;
@@ -52,7 +55,7 @@ enum Icon { KNOB_ICON_TIMER, KNOB_ICON_MUSIC, KNOB_ICON_SUN, KNOB_ICON_THERMO,
 Icon homeIcons[APP_COUNT] = {KNOB_ICON_TIMER, KNOB_ICON_MUSIC, KNOB_ICON_SUN,
                     KNOB_ICON_THERMO, KNOB_ICON_DISPLAY, KNOB_ICON_THERMO, KNOB_ICON_PLANE, KNOB_ICON_MORE, KNOB_ICON_HOME};
 Icon editorIcon = KNOB_ICON_TIMER, messageIcon = KNOB_ICON_CHECK;
-const char* menuNames[] = {"Info", "Status demo", "Standby", "Back"};
+const char* menuNames[] = {"Wi-Fi", "Auto standby", "Back"};
 lv_color_t color(uint32_t rgb) { return lv_color_hex(rgb); }
 int viewIndex(Screen s) { return static_cast<int>(s); }
 lv_obj_t* box(lv_obj_t* parent, int w, int h) {
@@ -222,7 +225,7 @@ void createViews() {
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-    for (int i = 0; i < 13; ++i) {
+    for (int i = 0; i < static_cast<int>(Screen::Count); ++i) {
         views[i] = box(root, 240, 240);
         lv_obj_add_flag(views[i], LV_OBJ_FLAG_HIDDEN);
     }
@@ -257,6 +260,7 @@ void createViews() {
     feedValue=label(v,"--",&knob_font_52,79,UI_TEXT,220);
     feedUnit=label(v,"",&knob_font_18,137,UI_MUTED);
     feedStatus=label(v,"",&knob_font_14,192,UI_MUTED,210);
+    feedError=label(v,"",&knob_font_14,162,UI_MUTED,210);
     v = views[viewIndex(Screen::Light)];
     label(v,"LIGHT",&knob_font_16,35,APPS[2].colour);
     lightAction=label(v,"Ready",&knob_font_24,100,UI_TEXT,210);
@@ -285,19 +289,32 @@ void createViews() {
     valueText = label(v, "15", &knob_font_52, 97, UI_TEXT, 180);
     valueUnit = label(v, "min", &knob_font_18, 153, UI_MUTED);
     v = views[viewIndex(Screen::Menu)];
-    label(v, "MORE", &knob_font_16, 35, UI_MUTED);
-    menuFocus = box(v, 168, 29); lv_obj_set_pos(menuFocus, 36, 64);
+    label(v, "SETTINGS", &knob_font_16, 35, UI_MUTED);
+    menuFocus = box(v, 168, 29); lv_obj_set_pos(menuFocus, 36, 74);
     lv_obj_set_style_radius(menuFocus, 9, 0);
     lv_obj_set_style_bg_color(menuFocus, color(0x253A36), 0);
     lv_obj_set_style_bg_opa(menuFocus, LV_OPA_COVER, 0);
-    for (int i = 0; i < 4; ++i) menuRows[i] = label(v, menuNames[i], &knob_font_16, 69 + 31 * i);
+    for (int i = 0; i < SETTINGS_MENU_COUNT; ++i) menuRows[i] = label(v, menuNames[i], &knob_font_16, 79 + 40 * i);
     v = views[viewIndex(Screen::Status)];
     noticeIcon = makeIcon(v, &messageIcon, 0xAEF582, 54);
     lv_obj_align(noticeIcon, LV_ALIGN_TOP_MID, 0, 51);
     noticeTitle = label(v, "", &knob_font_24, 131);
     noticeText = label(v, "", &knob_font_14, 168, UI_MUTED, 188);
     v = views[viewIndex(Screen::Standby)];
-    label(v, "Standby", &knob_font_24, 100);
+    clockLabel=label(v,"--:--",&knob_font_52,88,UI_TEXT,230);
+    v=views[viewIndex(Screen::StandbySettings)];
+    label(v,"Auto standby",&knob_font_18,40,UI_MUTED);
+    standbyValue=label(v,"1 min",&knob_font_24,95,UI_TEXT,225);
+    v=views[viewIndex(Screen::WifiConfirm)];
+    label(v,"Wi-Fi setup",&knob_font_24,32);
+    label(v,"Restart required\nTimer will stop",&knob_font_14,73,UI_MUTED);
+    wifiFocus=box(v,180,32);lv_obj_set_pos(wifiFocus,30,166);
+    lv_obj_set_style_radius(wifiFocus,9,0);lv_obj_set_style_bg_color(wifiFocus,color(0x253A36),0);
+    lv_obj_set_style_bg_opa(wifiFocus,LV_OPA_COVER,0);
+    wifiRows[0]=label(v,"Start setup",&knob_font_18,132);
+    wifiRows[1]=label(v,"Back",&knob_font_18,172);
+    v=views[viewIndex(Screen::WifiSetup)];
+    label(v,"Opening Wi-Fi setup",&knob_font_18,100);
     v = views[viewIndex(Screen::Stopped)];
     stopTitle = label(v, "Stopped", &knob_font_24, 53);
     stopReason = label(v, "Motor off", &knob_font_14, 99, UI_MUTED, 180);
@@ -410,8 +427,12 @@ void render(const State& s, const State& old, bool first) {
             } else if(r.valid && fabs(r.value)<1000000)snprintf(text,sizeof(text),"%.*f",int(spec.decimals),r.value);
             else snprintf(text,sizeof(text),"--");
             lv_label_set_text(feedValue,text);
+            lv_label_set_text(feedError,r.valid?"":r.status);
             int64_t age=int64_t(time(nullptr))-r.sourceTime;
-            bool stale=r.valid && age>KnobHomeFeeds::STALE_SECONDS;
+            const bool mqttPage=s.homeFeed==KnobHomeFeeds::MQTT_INDEX;
+            bool stale=r.valid && (mqttPage
+                ? uint32_t(millis()-r.receivedAt)>KnobMQTTConfig::RECEIVE_MAX_AGE_MS
+                : age>KnobHomeFeeds::STALE_SECONDS);
             // Quiet UI: retain subtle stale-value dimming, show only pagination below.
             lv_obj_set_style_text_color(feedValue,color(stale?UI_MUTED:UI_TEXT),0);
             snprintf(text,sizeof(text),"%d/%d",s.homeFeed+1,KnobHomeFeeds::COUNT);
@@ -483,10 +504,25 @@ void render(const State& s, const State& old, bool first) {
     }
     case Screen::Menu:
         if (changed || s.menu != old.menu) {
-            lv_obj_set_y(menuFocus, 64 + s.menu * 31);
-            for (int i = 0; i < 4; ++i) lv_obj_set_style_text_color(menuRows[i], color(i == s.menu ? UI_TEXT : UI_MUTED), 0);
+            lv_obj_set_y(menuFocus, 74 + s.menu * 40);
+            for (int i = 0; i < SETTINGS_MENU_COUNT; ++i) lv_obj_set_style_text_color(menuRows[i], color(i == s.menu ? UI_TEXT : UI_MUTED), 0);
         }
         break;
+    case Screen::StandbySettings:
+        if(changed || s.standbyOption!=old.standbyOption)
+            lv_label_set_text(standbyValue,STANDBY_LABELS[validStandby(s.standbyOption)?s.standbyOption:2]);
+        break;
+    case Screen::WifiConfirm:
+        if(changed || s.wifiChoice!=old.wifiChoice){
+            lv_obj_set_y(wifiFocus,126+40*s.wifiChoice);
+            for(int i=0;i<2;++i)lv_obj_set_style_text_color(wifiRows[i],color(i==s.wifiChoice?UI_TEXT:UI_MUTED),0);
+        }
+        break;
+    case Screen::Standby: {
+        static time_t minute=-1;time_t now=time(nullptr);
+        if(changed || minute!=now/60){char text[16];KnobClock::format(text,sizeof(text),now);lv_label_set_text(clockLabel,text);minute=now/60;}
+        break;
+    }
     case Screen::Status:
         if (changed || s.notice != old.notice) {
             messageIcon = s.notice == Notice::Applied ? KNOB_ICON_CHECK : s.notice == Notice::Info ? KNOB_ICON_INFO : KNOB_ICON_CROSS;
@@ -561,7 +597,9 @@ void drawRing(const State& s, bool flash, bool clapFlash = false, bool timerFlas
         for (int i = 0; i < LED_COUNT; ++i)
             set(i, ledBlend(0, tint, fmaxf(0, fminf(1, filled - i))));
         if (flash) set(filled > 0 ? int(ceilf(filled)) - 1 : 0, 0xFFFFFF);
-    } else if (s.screen == Screen::Menu) set(s.menu * 9, flash ? 0xFFFFFF : tint);
+    } else if (s.screen == Screen::Menu) set(s.menu * LED_COUNT / SETTINGS_MENU_COUNT, flash ? 0xFFFFFF : tint);
+    else if(s.screen==Screen::StandbySettings)set(s.standbyOption*LED_COUNT/STANDBY_OPTION_COUNT,flash?0xFFFFFF:tint);
+    else if(s.screen==Screen::WifiConfirm)set(s.wifiChoice*LED_COUNT/2,flash?0xFFFFFF:tint);
     else if (s.screen == Screen::Status) set(s.selected * LED_COUNT / APP_COUNT, s.notice == Notice::Demo ? 0xFF5040 : 0x55D98B);
     else if (s.screen == Screen::Boot) set(0, 0xFFB850);
     else if (s.screen == Screen::Stopped || s.screen == Screen::Fault) set(0, 0xFF3020);
@@ -619,7 +657,7 @@ void task(void*) {
         bool timerFlash = s.timerDone && now-s.timerDoneAt < 10000 && ((now-s.timerDoneAt)/500)%2==0;
         bool flash = flashing && now - flashAt < 150; if (!flash) flashing = false;
         if (first || oldLightOnline!=lightData.online || s.screen != old.screen || s.selected != old.selected || s.menu != old.menu ||
-            s.draft != old.draft || s.notice != old.notice || flash != lastFlash || clapFlash != lastClapFlash ||
+            s.draft != old.draft || s.standbyOption != old.standbyOption || s.wifiChoice != old.wifiChoice || s.notice != old.notice || flash != lastFlash || clapFlash != lastClapFlash ||
             timerFlash != lastTimerFlash || (s.screen == Screen::Timer && s.timerRemaining/1000 != old.timerRemaining/1000) ||
             (s.screen == Screen::Home && fabsf(s.homeOffset - old.homeOffset) > 0.0001f)) drawRing(s, flash, clapFlash, timerFlash);
         if (first || brightness(s) != brightness(old)) ledcWrite(0, brightness(s) * 1023UL / 100);
