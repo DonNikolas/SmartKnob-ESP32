@@ -5,8 +5,14 @@
 namespace KnobSettings {
 inline bool load(KnobApp::State& state) {
     Preferences p;if(!p.begin("knob-app",true))return false;
-    Record r;bool ok=p.getBytesLength("settings")==sizeof(r) &&
-        p.getBytes("settings",&r,sizeof(r))==sizeof(r) && valid(r);
+    Record r;bool ok=false;
+    const size_t length=p.getBytesLength("settings");
+    if(length==sizeof(r))ok=p.getBytes("settings",&r,sizeof(r))==sizeof(r)&&valid(r);
+    else if(length==sizeof(LegacyRecord)){
+        LegacyRecord old;
+        ok=p.getBytes("settings",&old,sizeof(old))==sizeof(old)&&valid(old);
+        if(ok)r=migrate(old);
+    }
     p.end();if(ok)apply(r,state);return ok;
 }
 inline bool save(const Record& record) {

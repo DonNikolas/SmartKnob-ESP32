@@ -19,6 +19,7 @@
 #include "app_gui/view.h"
 #include "app_gui/settings_store.h"
 #include "app_gui/light_link.h"
+#include "network_setup/wifi_portal.h"
 
 constexpr float TAU_F = 6.28318530718f, PI_F = TAU_F / 2, DEG_TO_RAD_F = PI_F / 180;
 constexpr uint8_t MOTOR_PINS[] = {4, 7, 5, 16, 6, 15};
@@ -96,7 +97,7 @@ void logPress(const char* event) {
 void pressLogTask(void*) {
     PressLog item;
     for (;;) if (xQueueReceive(pressLogQueue, &item, portMAX_DELAY) == pdTRUE) {
-        Serial.printf("DRIFT v2 | ms=%lu | %s | phase=%s | state=%s fault=%s | raw=%ld zero=%ld delta=%ld filt=%ld | valid=%d age=%lu seq=%lu | min=%ld max=%ld rangeValid=%d n=%lu | speed=%.3f spring=%.3f pulse=%u motor=%d | screen=%d app=%d pos=%.2f guard=%d | P=%ld R=%ld | D/S/L/R/B=%lu/%lu/%lu/%lu/%lu | clicks=%lu cancel=%lu lost=%lu drop=%lu | MIC=OFF\n",
+        Serial.printf("DRIFT v2 | ms=%lu | %s | phase=%s | state=%s fault=%s | raw=%ld zero=%ld delta=%ld filt=%ld | valid=%d age=%lu seq=%lu | min=%ld max=%ld rangeValid=%d n=%lu | speed=%.3f spring=%.3f pulse=%u motor=%d | screen=%d app=%d pos=%.2f guard=%d | P=%ld R=%ld | D/S/L/R/B=%lu/%lu/%lu/%lu/%lu | clicks=%lu cancel=%lu lost=%lu drop=%lu | MIC=FFT\n",
             (unsigned long)item.time, item.event, phaseName(item.phase), item.state, item.fault,
             item.raw, item.zero, item.delta, item.filtered, int(item.valid),
             (unsigned long)item.age, (unsigned long)item.seq, item.low, item.high,
@@ -184,7 +185,7 @@ void startMotor() {
 void changedView(KnobApp::Screen before) {
     if (app.state.screen == before) return;
     anchor();
-    if (app.state.screen == KnobApp::Screen::Standby) {
+    if (app.state.screen == KnobApp::Screen::Standby || app.state.screen == KnobApp::Screen::WifiSetup) {
         standbyAngle = angleCache; disableMotor();
     }
 }
@@ -353,6 +354,7 @@ void setup() {
     for (uint8_t pin : MOTOR_PINS) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
     pinMode(9, OUTPUT); digitalWrite(9, LOW); pinMode(DRIVER_DIAG, INPUT);
     Serial.begin(115200);
+    if(KnobWifiPortal::consumeRequest()){KnobWifiPortal::run();return;}
     KnobSettings::load(app.state);
     savedSettings = observedSettings = KnobSettings::capture(app.state);
     if (!KnobView::begin()) { stop("GUI initialization failed"); return; }
@@ -381,7 +383,7 @@ void setup() {
     if (!pressLogQueue || xTaskCreatePinnedToCore(pressLogTask, "pressLog", 4096, nullptr, 1, nullptr, 0) != pdPASS) {
         stop("Pressure diagnostic task allocation failed"); return;
     }
-    Serial.printf("PRESS DRIFT TEST v2 | P=%ld R=%ld | MIC=OFF | m=phase, i=sample, g/n=guard, x=stop\n",
+    Serial.printf("PRESS + CLAP FFT | P=%ld R=%ld | MIC=FFT | m=phase, i=sample, g/n=guard, x=stop\n",
         KnobPressure::Input::PRESS_COUNTS, KnobPressure::Input::RELEASE_COUNTS);
     pressure.begin(); ready = true; startupAt = millis(); previousTickUs = micros();
     Serial.println("SmartKnob app GUI: release knob for automatic zero. x = stop, r = restart while stopped.");
@@ -404,6 +406,14 @@ void loop() {
             logPress("MARK");
         } else if (key == 'i') logPress("MANUAL SAMPLE");
         else if (key == 'r' && latchedStop) { disableMotor(); ESP.restart(); }
+    }
+    if(ready && !latchedStop && app.state.screen==KnobApp::Screen::WifiSetup){
+        disableMotor();publish();
+        // Persist current app preferences before changing boot mode. Every NVS
+        // write happens after disabling motor output, as in serviceSettings().
+        if(!KnobSettings::save(KnobSettings::capture(app.state))){stop("Settings save failed before Wi-Fi setup");return;}
+        if(!KnobWifiPortal::requestNextBoot()){stop("Wi-Fi setup request could not be saved");return;}
+        ESP.restart();return;
     }
     app.updateTimer(millis());
     if (!ready || latchedStop) {
