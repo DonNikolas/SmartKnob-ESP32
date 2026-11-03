@@ -97,7 +97,7 @@ void logPress(const char* event) {
 void pressLogTask(void*) {
     PressLog item;
     for (;;) if (xQueueReceive(pressLogQueue, &item, portMAX_DELAY) == pdTRUE) {
-        Serial.printf("DRIFT v2 | ms=%lu | %s | phase=%s | state=%s fault=%s | raw=%ld zero=%ld delta=%ld filt=%ld | valid=%d age=%lu seq=%lu | min=%ld max=%ld rangeValid=%d n=%lu | speed=%.3f spring=%.3f pulse=%u motor=%d | screen=%d app=%d pos=%.2f guard=%d | P=%ld R=%ld | D/S/L/R/B=%lu/%lu/%lu/%lu/%lu | clicks=%lu cancel=%lu lost=%lu drop=%lu | MIC=OFF\n",
+        Serial.printf("DRIFT v2 | ms=%lu | %s | phase=%s | state=%s fault=%s | raw=%ld zero=%ld delta=%ld filt=%ld | valid=%d age=%lu seq=%lu | min=%ld max=%ld rangeValid=%d n=%lu | speed=%.3f spring=%.3f pulse=%u motor=%d | screen=%d app=%d pos=%.2f guard=%d | P=%ld R=%ld | D/S/L/R/B=%lu/%lu/%lu/%lu/%lu | clicks=%lu cancel=%lu lost=%lu drop=%lu | MIC=FFT\n",
             (unsigned long)item.time, item.event, phaseName(item.phase), item.state, item.fault,
             item.raw, item.zero, item.delta, item.filtered, int(item.valid),
             (unsigned long)item.age, (unsigned long)item.seq, item.low, item.high,
@@ -383,7 +383,7 @@ void setup() {
     if (!pressLogQueue || xTaskCreatePinnedToCore(pressLogTask, "pressLog", 4096, nullptr, 1, nullptr, 0) != pdPASS) {
         stop("Pressure diagnostic task allocation failed"); return;
     }
-    Serial.printf("PRESS DRIFT TEST v2 | P=%ld R=%ld | MIC=OFF | m=phase, i=sample, g/n=guard, x=stop\n",
+    Serial.printf("PRESS + CLAP FFT | P=%ld R=%ld | MIC=FFT | m=phase, i=sample, g/n=guard, x=stop\n",
         KnobPressure::Input::PRESS_COUNTS, KnobPressure::Input::RELEASE_COUNTS);
     pressure.begin(); ready = true; startupAt = millis(); previousTickUs = micros();
     Serial.println("SmartKnob app GUI: release knob for automatic zero. x = stop, r = restart while stopped.");

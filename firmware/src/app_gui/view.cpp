@@ -17,6 +17,7 @@
 #include <time.h>
 #include "knob_fonts.h"
 #include "clock_text.h"
+#include "clap_stream.h"
 
 #if !CONFIG_IDF_TARGET_ESP32S3 || ARDUINO_RUNNING_CORE != 1
 #error "This GUI requires ESP32-S3 with the Arduino loop on core 1."
@@ -248,7 +249,7 @@ void createViews() {
     sensorHumidity = label(v, "--.- %RH", &knob_font_24, 88);
     sensorPressure = label(v, "----.- hPa", &knob_font_24, 123);
     sensorStatus = label(v, "Starting sensor", &knob_font_14, 161, UI_MUTED);
-    audioStatus = label(v, "Mic off - pressure test", &knob_font_14, 182, UI_MUTED);
+    audioStatus = label(v, "Mic: starting", &knob_font_14, 182, UI_MUTED);
     v = views[viewIndex(Screen::Radar)];
     radarPlot = box(v,240,240);lv_obj_add_event_cb(radarPlot,radarDraw,LV_EVENT_DRAW_MAIN,nullptr);
     radarTitle = label(v,"25 km   N",&knob_font_16,10,APPS[RADAR_APP].colour);
@@ -605,10 +606,10 @@ void drawRing(const State& s, bool flash, bool clapFlash = false, bool timerFlas
     else if (s.screen == Screen::Stopped || s.screen == Screen::Fault) set(0, 0xFF3020);
     if (s.screen == Screen::Sensors || s.screen == Screen::Radar || s.screen == Screen::HomeFeeds) drawHomeGlow(s, flash);
     // Fault/stop indication takes precedence. A clap never changes app/motor state.
-    if (clapFlash && s.screen != Screen::Fault && s.screen != Screen::Stopped)
-        for (int i = 0; i < LED_COUNT; ++i) set(i, 0xFFFFFF);
     if(timerFlash && s.screen != Screen::Fault && s.screen != Screen::Stopped)
         for(int i=0;i<LED_COUNT;++i)set(i,APPS[0].colour);
+    if (clapFlash && s.screen != Screen::Fault && s.screen != Screen::Stopped)
+        for (int i = 0; i < LED_COUNT; ++i) set(i, 0xFFFFFF);
     ring.show();
 }
 int brightness(const State& s) {
@@ -633,7 +634,9 @@ void task(void*) {
     KnobBackground::begin();
     xQueueSend(resultQueue, &ok, 0);
     KnobBackground::Environment environment; KnobBackground::Audio audio;
-    bool lastClapFlash = false;
+    bool lastClapFlash = false, clapFlashing = false;
+    uint32_t clapFlashAt = 0;
+    KnobClap::ActionGate clapActions;
     bool first = true, lastFlash = false, flashing = false, lastTimerFlash = false;
     uint32_t previousTick = millis(), clickCount = 0, flashAt = 0;
     for (;;) {
@@ -646,13 +649,23 @@ void task(void*) {
         const bool oldLightOnline=lightData.online;
         KnobLight::read(lightData);
         KnobBackground::read(environment, audio);
+        now = millis(); // Snapshot may have been produced after the loop began.
         s.environment = environment; s.audio = audio;
         if (s.environment.valid && now - s.environment.measuredAt > 6000) {
             s.environment.valid = false; s.environment.status = "Sensor data stale";
         }
-        // Deliberately disabled for pressure diagnosis: no clap-triggered light
-        // requests and no clap flash, even if stale audio data were supplied.
-        const bool clapFlash = false;
+        const bool clapAllowed = s.screen != Screen::Boot && s.screen != Screen::Fault &&
+            s.screen != Screen::Stopped && s.screen != Screen::WifiSetup;
+        if (clapActions.take(audio.pairs, audio.lastPairAt, now, clapAllowed,
+                             KnobBackground::clickSuppressed(now))) {
+            clapFlashAt = now; clapFlashing = true;
+            const bool queued = KnobLight::request(KnobLight::Action::Toggle);
+            // Queued is not confirmation that IR reached the lamp.
+            Serial.printf("CLAP FFT | pair=%lu | light=%s\n", (unsigned long)audio.pairs,
+                          queued ? "queued" : "offline/dropped");
+        }
+        const bool clapFlash = clapFlashing && clapAllowed && now - clapFlashAt < 180;
+        if (!clapFlash) clapFlashing = false;
         if (s.clicks != clickCount) { clickCount = s.clicks; flashAt = now; flashing = true; }
         bool timerFlash = s.timerDone && now-s.timerDoneAt < 10000 && ((now-s.timerDoneAt)/500)%2==0;
         bool flash = flashing && now - flashAt < 150; if (!flash) flashing = false;
