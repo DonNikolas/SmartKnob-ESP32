@@ -7,3 +7,9 @@ _restore_backup_*/
 fp-info-cache
 
 .pio/
+
+/firmware/include/home_feeds_private/config.h
+
+/.mqtt-prep-backup/
+
+/firmware/logs/
