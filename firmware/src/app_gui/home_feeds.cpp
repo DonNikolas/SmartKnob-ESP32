@@ -13,6 +13,7 @@
 #include "home_feeds_parse.h"
 #include "mqtt_link.h"
 #include "home_feeds_roots.h"
+#include "home_feeds_config.h"
 namespace KnobHomeFeeds {
 namespace {
 QueueHandle_t queue=nullptr;
@@ -21,7 +22,7 @@ Snapshot snapshot;
 uint32_t attempts[COUNT]={};bool attempted[COUNT]={};
 void status(int index,const char* text){
     if(strcmp(snapshot.readings[index].status,text))
-        Serial.printf("HOME_FEED %u: %s\n",FEEDS[index].id,text);
+        Serial.printf("HOME_FEED %u: %s\n",unsigned(index + 1),text);
     snprintf(snapshot.readings[index].status,sizeof(snapshot.readings[index].status),"%s",text);
     ++snapshot.sequence;xQueueOverwrite(queue,&snapshot);
 }
@@ -36,10 +37,11 @@ public:
     int peek() override{return -1;}void flush() override{}
 };
 void fetch(int index){
+    if(!KnobHomeConfig::configured(index)){status(index,"Not configured");return;}
     WiFiClientSecure tls;tls.setCACert(HOME_FEED_ROOTS);tls.setTimeout(3000);tls.setHandshakeTimeout(4);
     HTTPClient http;http.setConnectTimeout(3000);http.setTimeout(3000);
     http.setUserAgent("SmartKnob-ESP32/home-sensors-v1");
-    char url[100];snprintf(url,sizeof(url),"https://emon.boxtec.ch/feed/timevalue.json?id=%u",FEEDS[index].id);
+    const char* url = KnobHomeConfig::urlFor(index);
     status(index,"Updating");
     if(!http.begin(tls,url)){status(index,"HTTPS setup failed");return;}
     int code=http.GET();
@@ -56,7 +58,9 @@ void task(void*){
     for(;;){
         int index=selected.load();uint32_t now=millis();
         if(index>=0 && index<HTTP_COUNT){
-            if(WiFi.status()!=WL_CONNECTED){
+            if(!KnobHomeConfig::configured(index)){
+                if(strcmp(snapshot.readings[index].status,"Not configured"))status(index,"Not configured");
+            }else if(WiFi.status()!=WL_CONNECTED){
                 if(strcmp(snapshot.readings[index].status,"Wi-Fi offline"))status(index,"Wi-Fi offline");
             }else if(time(nullptr)<1700000000){
                 if(strcmp(snapshot.readings[index].status,"Waiting for clock"))status(index,"Waiting for clock");

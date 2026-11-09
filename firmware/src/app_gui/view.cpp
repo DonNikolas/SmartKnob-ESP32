@@ -418,9 +418,9 @@ void render(const State& s, const State& old, bool first) {
         if(changed || s.homeFeed!=old.homeFeed || seq!=homeData.sequence || second!=millis()/1000){
             const auto& spec=KnobHomeFeeds::FEEDS[s.homeFeed];const auto& r=homeData.readings[s.homeFeed];
             lv_label_set_text(feedName,spec.label);lv_label_set_text(feedUnit,spec.unit);
-            lv_obj_set_style_text_font(feedValue,spec.id==300?&knob_font_24:&knob_font_52,0);
+            lv_obj_set_style_text_font(feedValue,spec.isSwitch?&knob_font_24:&knob_font_52,0);
             char text[80];
-            if(spec.id==300) {
+            if(spec.isSwitch) {
                 // Confirmed by the user: 1 = light ON, 0 = light OFF.
                 // Unexpected values are unknown, never coerced into a switch state.
                 snprintf(text,sizeof(text),"%s",!r.valid?"--":r.value==1?"ON":r.value==0?"OFF":"--");

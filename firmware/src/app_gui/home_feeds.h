@@ -8,12 +8,12 @@ constexpr int HTTP_COUNT=5;
 constexpr int MQTT_INDEX=5;
 constexpr int COUNT=6;
 constexpr uint32_t STALE_SECONDS=300;
-struct Feed {unsigned id;const char* label;const char* unit;unsigned decimals;};
+struct Feed {bool isSwitch;const char* label;const char* unit;unsigned decimals;};
 static constexpr Feed FEEDS[COUNT]={
-    {264,"Freezer","°C",1}, {428,"Humidity","%RH",1},
-    {298,"Garage temperature","°C",1}, {300,"Garage Light","",0},
-    {267,"Air pressure","hPa",1},
-    {0,KnobMQTTConfig::INPUT_LABEL,KnobMQTTConfig::INPUT_UNIT,KnobMQTTConfig::INPUT_DECIMALS}
+    {false,"Freezer","°C",1}, {false,"Humidity","%RH",1},
+    {false,"Garage temperature","°C",1}, {true,"Garage Light","",0},
+    {false,"Air pressure","hPa",1},
+    {false,KnobMQTTConfig::INPUT_LABEL,KnobMQTTConfig::INPUT_UNIT,KnobMQTTConfig::INPUT_DECIMALS}
 };
 struct Reading {double value=0;uint32_t sourceTime=0,receivedAt=0;bool valid=false;char status[40]="Not loaded";};
 struct Snapshot {Reading readings[COUNT];uint32_t sequence=0;};

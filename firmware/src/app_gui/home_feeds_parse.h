@@ -3,6 +3,7 @@
 #include <math.h>
 #include <string.h>
 #include "home_feeds.h"
+#include "home_feeds_config.h"
 namespace KnobHomeFeeds {
 namespace ParseDetail {
 inline bool whitespace(char c){return c==' '||c=='\t'||c=='\r'||c=='\n';}
@@ -13,11 +14,9 @@ inline void trimStart(const char*& data,size_t& length){
 // 2026-10-28. Do not search arbitrary HTML/error pages for a JSON object.
 inline bool skipBoxtecWarning(const char*& data,size_t& length){
     trimStart(data,length);
-    static const char warning[]=
-        "<br />\n<b>Deprecated</b>:  explode(): Passing null to parameter #2 ($string) of type string is deprecated in "
-        "<b>/home/www/emon.boxtec.ch/web/locale.php</b> on line <b>43</b><br />";
-    const size_t size=sizeof(warning)-1;
-    if(length>=size&&memcmp(data,warning,size)==0){data+=size;length-=size;trimStart(data,length);}
+    const char* warning=KnobHomeConfig::WARNING_PREFIX;
+    const size_t size=strlen(warning);
+    if(size && length>=size&&memcmp(data,warning,size)==0){data+=size;length-=size;trimStart(data,length);}
     return length&&*data=='{';
 }
 // ArduinoJson's reader interface lets us check that no trailing error page,

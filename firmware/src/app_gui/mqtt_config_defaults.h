@@ -9,12 +9,12 @@ constexpr bool TLS=false;
 constexpr char CA_CERT[]=""; // PEM CA certificate required if TLS=true.
 constexpr char USER[]="";
 constexpr char PASSWORD[]="";
-constexpr char TEMPERATURE_TOPIC[]="smartknob/sensors/temperature";
-constexpr char INPUT_TOPIC[]="smartknob/input/value";
-constexpr char STATUS_TOPIC[]="smartknob/status";
+constexpr char TEMPERATURE_TOPIC[]="";
+constexpr char INPUT_TOPIC[]="";
+constexpr char STATUS_TOPIC[]="";
 constexpr char INPUT_LABEL[]="MQTT Value";
 constexpr char INPUT_UNIT[]="";
-constexpr unsigned INPUT_DECIMALS=1;
+constexpr unsigned INPUT_DECIMALS=2;
 constexpr unsigned PUBLISH_MS=10000;
 constexpr unsigned RECEIVE_MAX_AGE_MS=300000;
 }

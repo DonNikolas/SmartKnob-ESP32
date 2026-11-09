@@ -6,7 +6,7 @@
 #include "../../src/app_gui/home_feeds_parse.h"
 using namespace KnobHomeFeeds;
 int main(int argc,char** argv){
- const std::string warning="<br />\n<b>Deprecated</b>:  explode(): Passing null to parameter #2 ($string) of type string is deprecated in <b>/home/www/emon.boxtec.ch/web/locale.php</b> on line <b>43</b><br />\n";
+ const std::string warning=std::string(KnobHomeConfig::WARNING_PREFIX)+"\n";
  auto good=[](const std::string& s,double expected){Reading r;assert(parse(s.data(),s.size(),r));assert(r.valid&&r.value==expected&&r.sourceTime==1793178717);};
  auto bad=[](const std::string& s){Reading r;r.value=123;r.valid=false;assert(!parse(s.data(),s.size(),r));assert(!r.valid&&r.value==123);};
  good("{\"time\":1793178717,\"value\":-22.81}",-22.81);

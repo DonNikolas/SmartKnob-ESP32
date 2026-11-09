@@ -15,16 +15,16 @@ or independent verification of the physical measurements.
 
 Feed mappings originate from the user's previous Nextion Arduino sketch.
 Only the mappings were reused; WLAN credentials were not copied.
-The app reads `https://emon.boxtec.ch/feed/timevalue.json?id=ID`.
+The app reads `https://example.invalid/feed/timevalue.json?id=ID`.
 This is HTTPS, not direct MQTT. MQTT publish/subscribe remains outstanding.
 
 | Feed ID | Display label | Interpretation |
 | --- | --- | --- |
-| 264 | Freezer | Temperature in degrees C |
-| 428 | Humidity | Relative humidity in %RH; room unspecified |
-| 298 | Garage temperature | Temperature in degrees C |
-| 300 | Garage Light | Exactly 1 = ON; exactly 0 = OFF; other/missing values = -- |
-| 267 | Air pressure | Pressure in hPa; no conversion |
+| PRIVATE_FEED_ID | Freezer | Temperature in degrees C |
+| PRIVATE_FEED_ID | Humidity | Relative humidity in %RH; room unspecified |
+| PRIVATE_FEED_ID | Garage temperature | Temperature in degrees C |
+| PRIVATE_FEED_ID | Garage Light | Exactly 1 = ON; exactly 0 = OFF; other/missing values = -- |
+| PRIVATE_FEED_ID | Air pressure | Pressure in hPa; no conversion |
 
 The user confirmed the Garage Light mapping. An earlier API sample returned 117;
 this is not a valid binary light state and is therefore displayed as --. The
@@ -47,7 +47,7 @@ visible after a connection failure; a visible number alone is not proof that the
 connection is currently working.
 
 The original measurement timestamp remains available internally. Values older
-than 300 seconds are dimmed, without an age label. This threshold may require
+than PRIVATE_FEED_ID seconds are dimmed, without an age label. This threshold may require
 adjustment for sensors with slower update intervals. The humidity feed had an
 old source timestamp during development; fetching it again does not make the
 underlying measurement current.
