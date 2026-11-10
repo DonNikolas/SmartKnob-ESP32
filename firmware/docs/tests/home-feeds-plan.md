@@ -15,8 +15,6 @@ or independent verification of the physical measurements.
 
 Feed mappings originate from the user's previous Nextion Arduino sketch.
 Only the mappings were reused; WLAN credentials were not copied.
-The app reads `https://example.invalid/feed/timevalue.json?id=ID`.
-This is HTTPS, not direct MQTT. MQTT publish/subscribe remains outstanding.
 
 | Feed ID | Display label | Interpretation |
 | --- | --- | --- |
