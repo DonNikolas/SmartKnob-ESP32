@@ -1,4 +1,4 @@
-# Boxtec Home Sensors
+# Home Sensors
 
 Generated with ChatGPT assistance.
 
@@ -10,24 +10,6 @@ was recorded. This establishes basic operation, not a completed reliability test
 or independent verification of the physical measurements.
 
 [Home Sensors demo](../videos/home-sensors-demo.mp4)
-
-## Source and scope
-
-Feed mappings originate from the user's previous Nextion Arduino sketch.
-Only the mappings were reused; WLAN credentials were not copied.
-
-| Feed ID | Display label | Interpretation |
-| --- | --- | --- |
-| PRIVATE_FEED_ID | Freezer | Temperature in degrees C |
-| PRIVATE_FEED_ID | Humidity | Relative humidity in %RH; room unspecified |
-| PRIVATE_FEED_ID | Garage temperature | Temperature in degrees C |
-| PRIVATE_FEED_ID | Garage Light | Exactly 1 = ON; exactly 0 = OFF; other/missing values = -- |
-| PRIVATE_FEED_ID | Air pressure | Pressure in hPa; no conversion |
-
-The user confirmed the Garage Light mapping. An earlier API sample returned 117;
-this is not a valid binary light state and is therefore displayed as --. The
-transport parser retains numeric values; the view performs the binary mapping.
-The Home Sensors app is read-only. Garage Light is an indicator, not a switch.
 
 ## Interaction and appearance
 
